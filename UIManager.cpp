@@ -130,7 +130,7 @@ void UIManager::drawTrackName(const char *name)
 
     if (textW <= OLED_WIDTH)
     {
-        // Fits — center it
+        // Fits — left align it
         _display.setCursor(0, 0);
         _display.print(name);
     }
