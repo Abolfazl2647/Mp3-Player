@@ -131,7 +131,7 @@ void UIManager::drawTrackName(const char *name)
     if (textW <= OLED_WIDTH)
     {
         // Fits — center it
-        _display.setCursor((OLED_WIDTH - textW) / 2, 0);
+        _display.setCursor(0, 0);
         _display.print(name);
     }
     else
