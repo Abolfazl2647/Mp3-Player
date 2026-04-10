@@ -1,0 +1,1089 @@
+================================================================================
+  MP3 Player — Complete Source Code
+  Board: ESP32-D0WD-V3
+================================================================================
+
+
+========================== mp3_player.ino ==========================
+
+// ============================================================
+//  MP3 Player — Main Entry Point
+//  Board:  ESP32-D0WD-V3
+//  Author: Auto-generated
+// ============================================================
+//
+//  REQUIRED LIBRARIES (install via Arduino Library Manager):
+//    1. ESP8266Audio      — MP3 decoding + I2S output
+//    2. Adafruit SSD1306  — OLED driver
+//    3. Adafruit GFX      — Graphics primitives
+//    4. SD (built-in)     — FAT32 SD card access
+//
+//  HARDWARE NOTES:
+//    - No external pull-up resistors needed
+//    - PCM5102A: tie SCK to GND, FMT to GND (I2S standard)
+//    - Power ESP32 + PCM5102A via VIN (5V)
+//    - Power OLED + SD + buttons via 3.3V
+//
+// ============================================================
+// | SDA → GPIO 21 | SCL → GPIO 22 | VCC → 3.3V | GND → GND |
+
+// SD Card (SPI)
+// | CS → GPIO 5 | MOSI → GPIO 23 | MISO → GPIO 19 | SCK → GPIO 18 | VCC → 3.3V | GND → GND |
+
+// PCM5102A (I2S)
+// | BCK → GPIO 26 | LCK → GPIO 25 | DIN → GPIO 27 | SCK → GND | FMT → GND | VIN → 5V | GND → GND |
+
+// Rotary Encoder
+// | CLK → GPIO 32 | DT → GPIO 33 | SW → GPIO 13 | GND → GND |
+
+// Buttons (each button wires between pin and GND)
+// | Next → GPIO 4 | Prev → GPIO 14 |
+
+#include "Config.h"
+#include "AppController.h"
+
+AppController app;
+
+void setup()
+{
+  app.begin();
+}
+
+void loop()
+{
+  app.update();
+}
+
+
+========================== Config.h ==========================
+
+#pragma once
+
+// ============================================================
+//  MP3 Player — Pin Mapping & Configuration
+//  Board: ESP32-D0WD-V3
+// ============================================================
+//
+//  PIN ASSIGNMENT TABLE
+//  ┌─────────────┬──────┬────────────────────────────────┐
+//  │ Function    │ Pin  │ Notes                          │
+//  ├─────────────┼──────┼────────────────────────────────┤
+//  │ I2C SDA     │ 21   │ OLED display                   │
+//  │ I2C SCL     │ 22   │ OLED display                   │
+//  │ SPI MOSI    │ 23   │ SD card (VSPI default)         │
+//  │ SPI MISO    │ 19   │ SD card (VSPI default)         │
+//  │ SPI SCK     │ 18   │ SD card (VSPI default)         │
+//  │ SPI CS      │  5   │ SD card chip select            │
+//  │ I2S BCLK    │ 26   │ PCM5102A bit clock             │
+//  │ I2S LRCK    │ 25   │ PCM5102A word select           │
+//  │ I2S DOUT    │ 27   │ PCM5102A data out              │
+//  │ ROT CLK     │ 32   │ Rotary encoder A (interrupt)   │
+//  │ ROT DT      │ 33   │ Rotary encoder B (interrupt)   │
+//  │ ROT SW      │ 13   │ Rotary push (internal pull-up) │
+//  │ BTN NEXT    │  4   │ Button 1 (internal pull-up)    │
+//  │ BTN PREV    │ 14   │ Button 2 (internal pull-up)    │
+//  └─────────────┴──────┴────────────────────────────────┘
+//
+//  No external pull-up resistors needed — all button/encoder
+//  pins use internal pull-ups.
+//
+
+// ── I2C (OLED) ────────────────────────────────────────────
+#define PIN_I2C_SDA 21
+#define PIN_I2C_SCL 22
+#define OLED_WIDTH 128
+#define OLED_HEIGHT 32
+#define OLED_ADDR 0x3C
+
+// ── SPI (SD card) ─────────────────────────────────────────
+#define PIN_SD_CS 5
+// MOSI=23, MISO=19, SCK=18 are VSPI defaults used by SD lib
+
+// ── I2S (PCM5102A DAC) ───────────────────────────────────
+#define PIN_I2S_BCLK 26
+#define PIN_I2S_LRCK 25
+#define PIN_I2S_DOUT 27
+
+// ── Rotary encoder ────────────────────────────────────────
+#define PIN_ROT_CLK 32
+#define PIN_ROT_DT 33
+#define PIN_ROT_SW 13 // internal pull-up
+
+// ── Buttons ───────────────────────────────────────────────
+#define PIN_BTN_NEXT 4 // internal pull-up
+#define PIN_BTN_PREV 14
+
+// ── Audio settings ────────────────────────────────────────
+#define VOLUME_DEFAULT 15 // 0–21 (ESP8266Audio gain range)
+#define VOLUME_MIN 0
+#define VOLUME_MAX 21
+#define VOLUME_STEP 1
+
+// ── SD / file settings ───────────────────────────────────
+#define MAX_TRACKS 500
+#define MP3_ROOT_DIR "/"
+
+// ── UI timing (ms) ───────────────────────────────────────
+#define UI_REFRESH_MS 100  // ~10 FPS display refresh
+#define SCROLL_STEP_MS 200 // marquee scroll speed
+#define DEBOUNCE_MS 50     // button debounce
+
+// ── FreeRTOS task settings ────────────────────────────────
+#define AUDIO_TASK_STACK 8192
+#define AUDIO_TASK_PRIO 2 // higher than default (1)
+#define AUDIO_TASK_CORE 1 // run audio on core 1
+
+
+========================== AppController.h ==========================
+
+#pragma once
+#include "AudioManager.h"
+#include "SDManager.h"
+#include "UIManager.h"
+#include "InputManager.h"
+
+class AppController
+{
+public:
+    void begin();
+    void update(); // called from loop()
+
+private:
+    AudioManager _audio;
+    SDManager _sd;
+    UIManager _ui;
+    InputManager _input;
+
+    int16_t _currentTrack = 0;
+    bool _started = false; // has user ever pressed play?
+
+    // Input callbacks (static trampolines → instance methods)
+    static AppController *_instance;
+    static void onNext();
+    static void onPrev();
+    static void onPlayPause();
+    static void onVolume(int dir);
+
+    void nextTrack();
+    void prevTrack();
+    void togglePlayPause();
+    void changeVolume(int dir);
+
+    // FreeRTOS audio task
+    static void audioTask(void *param);
+    void startAudioTask();
+};
+
+
+========================== AppController.cpp ==========================
+
+#include "AppController.h"
+
+AppController *AppController::_instance = nullptr;
+
+// ── Static callback trampolines ───────────────────────────
+void AppController::onNext()
+{
+    if (_instance)
+        _instance->nextTrack();
+}
+void AppController::onPrev()
+{
+    if (_instance)
+        _instance->prevTrack();
+}
+void AppController::onPlayPause()
+{
+    if (_instance)
+        _instance->togglePlayPause();
+}
+void AppController::onVolume(int d)
+{
+    if (_instance)
+        _instance->changeVolume(d);
+}
+
+void AppController::begin()
+{
+    _instance = this;
+
+    Serial.begin(115200);
+    Serial.println(F("\n=== MP3 Player ==="));
+
+    _ui.begin();
+
+    if (!_sd.begin())
+    {
+        Serial.println(F("[App] No MP3 files found!"));
+        // UI will show "---" — system idles
+    }
+
+    _audio.begin();
+
+    _input.begin();
+    _input.onNextPress(onNext);
+    _input.onPrevPress(onPrev);
+    _input.onRotaryClick(onPlayPause);
+    _input.onRotaryTurn(onVolume);
+
+    _currentTrack = 0;
+    _started = false;
+
+    // Launch audio decoder on core 1 as high-priority task
+    startAudioTask();
+
+    Serial.printf("[App] Ready. %d tracks indexed.\n", _sd.getTrackCount());
+}
+
+void AppController::update()
+{
+    // Poll inputs (runs on core 0 — main loop)
+    _input.update();
+
+    // Auto-advance when track finishes (nextTrack already calls play)
+    if (_audio.trackFinished() && _started)
+    {
+        nextTrack();
+    }
+
+    // Update display
+    _ui.update(
+        _sd.getTrackName(_currentTrack),
+        _audio.getState(),
+        _audio.getProgress(),
+        _audio.getPositionSec(),
+        _audio.getDurationSec(),
+        _audio.getVolume(),
+        _currentTrack,
+        _sd.getTrackCount());
+}
+
+// ── Control methods ───────────────────────────────────────
+void AppController::nextTrack()
+{
+    uint16_t total = _sd.getTrackCount();
+    if (total == 0)
+        return;
+    _currentTrack = (_currentTrack + 1) % total;
+    if (_started)
+    {
+        _audio.play(_sd.getTrackPath(_currentTrack));
+    }
+}
+
+void AppController::prevTrack()
+{
+    uint16_t total = _sd.getTrackCount();
+    if (total == 0)
+        return;
+    _currentTrack = (_currentTrack - 1 + total) % total;
+    if (_started)
+    {
+        _audio.play(_sd.getTrackPath(_currentTrack));
+    }
+}
+
+void AppController::togglePlayPause()
+{
+    if (_sd.getTrackCount() == 0)
+        return;
+
+    switch (_audio.getState())
+    {
+    case PlayState::STOPPED:
+        _started = true;
+        _audio.play(_sd.getTrackPath(_currentTrack));
+        break;
+    case PlayState::PLAYING:
+        _audio.pause();
+        break;
+    case PlayState::PAUSED:
+        _audio.resume();
+        break;
+    }
+}
+
+void AppController::changeVolume(int dir)
+{
+    int vol = _audio.getVolume() + dir * VOLUME_STEP;
+    _audio.setVolume(vol);
+}
+
+// ── FreeRTOS audio task ───────────────────────────────────
+// Runs on core 1, continuously pumps the MP3 decoder
+// so audio never stutters regardless of UI/input load on core 0
+void AppController::audioTask(void *param)
+{
+    AudioManager *audio = static_cast<AudioManager *>(param);
+    for (;;)
+    {
+        audio->loop();
+        // Yield ~125µs — enough for 44.1kHz I2S feeding
+        vTaskDelay(1);
+    }
+}
+
+void AppController::startAudioTask()
+{
+    xTaskCreatePinnedToCore(
+        audioTask,
+        "audio",
+        AUDIO_TASK_STACK,
+        &_audio,
+        AUDIO_TASK_PRIO,
+        nullptr,
+        AUDIO_TASK_CORE);
+}
+
+
+========================== AudioManager.h ==========================
+
+#pragma once
+#include <Arduino.h>
+#include "Config.h"
+
+enum class PlayState : uint8_t
+{
+    STOPPED,
+    PLAYING,
+    PAUSED
+};
+
+class AudioManager
+{
+public:
+    void begin();
+    void play(const char *path);
+    void stop();
+    void pause();
+    void resume();
+    void setVolume(int vol);
+    int getVolume() const;
+
+    PlayState getState() const;
+    bool isPlaying() const;
+    float getProgress() const; // 0.0–1.0
+    uint32_t getPositionSec() const;
+    uint32_t getDurationSec() const;
+
+    // Called from FreeRTOS task — pumps the decoder
+    void loop();
+
+    // Flag: current track finished
+    bool trackFinished();
+
+private:
+    volatile PlayState _state = PlayState::STOPPED; // volatile: accessed from both cores
+    int _volume = VOLUME_DEFAULT;
+    volatile bool _finished = false;
+    uint32_t _fileSize = 0;
+    unsigned long _playStartMs = 0;
+    unsigned long _pausedElapsed = 0;
+};
+
+
+========================== AudioManager.cpp ==========================
+
+#include "AudioManager.h"
+#include <SD.h>
+#include "AudioFileSourceSD.h"
+#include "AudioGeneratorMP3.h"
+#include "AudioOutputI2S.h"
+
+// ESP8266Audio objects — kept in .cpp to avoid header pollution
+static AudioFileSourceSD *_source = nullptr;
+static AudioGeneratorMP3 *_mp3 = nullptr;
+static AudioOutputI2S *_out = nullptr;
+
+void AudioManager::begin()
+{
+    _out = new AudioOutputI2S();
+    _out->SetPinout(PIN_I2S_BCLK, PIN_I2S_LRCK, PIN_I2S_DOUT);
+    _out->SetGain(((float)_volume) / (float)VOLUME_MAX);
+    _mp3 = new AudioGeneratorMP3();
+    _state = PlayState::STOPPED;
+}
+
+void AudioManager::play(const char *path)
+{
+    stop(); // clean up any previous playback
+
+    File f = SD.open(path);
+    if (f)
+    {
+        _fileSize = f.size();
+        f.close();
+    }
+    else
+    {
+        _fileSize = 0;
+    }
+
+    _source = new AudioFileSourceSD(path);
+    _out->SetGain(((float)_volume) / (float)VOLUME_MAX);
+
+    if (_mp3->begin(_source, _out))
+    {
+        _state = PlayState::PLAYING;
+        _finished = false;
+        _playStartMs = millis();
+        _pausedElapsed = 0;
+        Serial.printf("[Audio] Playing: %s\n", path);
+    }
+    else
+    {
+        Serial.println(F("[Audio] Failed to begin MP3"));
+        delete _source;
+        _source = nullptr;
+        _state = PlayState::STOPPED;
+    }
+}
+
+void AudioManager::stop()
+{
+    if (_mp3 && _mp3->isRunning())
+    {
+        _mp3->stop();
+    }
+    if (_source)
+    {
+        delete _source;
+        _source = nullptr;
+    }
+    _state = PlayState::STOPPED;
+    _finished = false;
+    _playStartMs = 0;
+    _pausedElapsed = 0;
+}
+
+void AudioManager::pause()
+{
+    if (_state == PlayState::PLAYING)
+    {
+        _pausedElapsed = millis() - _playStartMs;
+        _state = PlayState::PAUSED;
+    }
+}
+
+void AudioManager::resume()
+{
+    if (_state == PlayState::PAUSED)
+    {
+        _playStartMs = millis() - _pausedElapsed;
+        _state = PlayState::PLAYING;
+    }
+}
+
+void AudioManager::setVolume(int vol)
+{
+    _volume = constrain(vol, VOLUME_MIN, VOLUME_MAX);
+    if (_out)
+    {
+        _out->SetGain(((float)_volume) / (float)VOLUME_MAX);
+    }
+}
+
+int AudioManager::getVolume() const
+{
+    return _volume;
+}
+
+PlayState AudioManager::getState() const
+{
+    return _state;
+}
+
+bool AudioManager::isPlaying() const
+{
+    return _state == PlayState::PLAYING;
+}
+
+float AudioManager::getProgress() const
+{
+    if (!_source || _fileSize == 0)
+        return 0.0f;
+    return (float)_source->getPos() / (float)_fileSize;
+}
+
+uint32_t AudioManager::getPositionSec() const
+{
+    if (_state == PlayState::STOPPED)
+        return 0;
+    unsigned long elapsed;
+    if (_state == PlayState::PAUSED)
+    {
+        elapsed = _pausedElapsed;
+    }
+    else
+    {
+        elapsed = millis() - _playStartMs;
+    }
+    return elapsed / 1000;
+}
+
+uint32_t AudioManager::getDurationSec() const
+{
+    // Rough estimate: MP3 ~16 kByte/s at 128kbps
+    if (_fileSize == 0)
+        return 0;
+    return _fileSize / 16000;
+}
+
+bool AudioManager::trackFinished()
+{
+    if (_finished)
+    {
+        _finished = false;
+        return true;
+    }
+    return false;
+}
+
+void AudioManager::loop()
+{
+    if (_state != PlayState::PLAYING)
+        return;
+    if (_mp3 && _mp3->isRunning())
+    {
+        if (!_mp3->loop())
+        {
+            // Decoder returned false — track finished
+            _mp3->stop();
+            _state = PlayState::STOPPED;
+            _finished = true;
+            if (_source)
+            {
+                delete _source;
+                _source = nullptr;
+            }
+            Serial.println(F("[Audio] Track finished"));
+        }
+    }
+}
+
+
+========================== SDManager.h ==========================
+
+#pragma once
+#include <Arduino.h>
+
+// Forward‐declare the maximum number of tracks from config
+#include "Config.h"
+
+class SDManager
+{
+public:
+    bool begin();
+    uint16_t getTrackCount() const;
+    const char *getTrackPath(uint16_t index) const;
+    const char *getTrackName(uint16_t index) const;
+
+private:
+    void scanDirectory(const char *dir);
+    char _paths[MAX_TRACKS][64]; // full path (e.g. "/folder/song.mp3")
+    uint16_t _count = 0;
+};
+
+
+========================== SDManager.cpp ==========================
+
+#include "SDManager.h"
+#include <SD.h>
+#include <SPI.h>
+#include <cstring>
+
+bool SDManager::begin()
+{
+    if (!SD.begin(PIN_SD_CS))
+    {
+        Serial.println(F("[SD] Mount failed"));
+        return false;
+    }
+    Serial.println(F("[SD] Mounted OK"));
+    _count = 0;
+    scanDirectory(MP3_ROOT_DIR);
+    // Sort alphabetically for predictable ordering (insertion sort)
+    for (uint16_t i = 1; i < _count; i++)
+    {
+        for (uint16_t j = i; j > 0 && strcasecmp(_paths[j - 1], _paths[j]) > 0; j--)
+        {
+            char tmp[64];
+            memcpy(tmp, _paths[j], 64);
+            memcpy(_paths[j], _paths[j - 1], 64);
+            memcpy(_paths[j - 1], tmp, 64);
+        }
+    }
+    Serial.printf("[SD] Found %d MP3 files\n", _count);
+    return _count > 0;
+}
+
+void SDManager::scanDirectory(const char *dirPath)
+{
+    File root = SD.open(dirPath);
+    if (!root || !root.isDirectory())
+        return;
+
+    File entry;
+    while ((entry = root.openNextFile()) && _count < MAX_TRACKS)
+    {
+        if (entry.isDirectory())
+        {
+            // Recurse into subdirectories
+            scanDirectory(entry.path());
+        }
+        else
+        {
+            const char *name = entry.name();
+            size_t len = strlen(name);
+            // Accept .mp3 files only
+            if (len > 4 &&
+                (strcasecmp(name + len - 4, ".mp3") == 0))
+            {
+                strncpy(_paths[_count], entry.path(), sizeof(_paths[0]) - 1);
+                _paths[_count][sizeof(_paths[0]) - 1] = '\0';
+                _count++;
+            }
+        }
+        entry.close();
+    }
+    root.close();
+}
+
+uint16_t SDManager::getTrackCount() const
+{
+    return _count;
+}
+
+const char *SDManager::getTrackPath(uint16_t index) const
+{
+    if (index >= _count)
+        return nullptr;
+    return _paths[index];
+}
+
+const char *SDManager::getTrackName(uint16_t index) const
+{
+    if (index >= _count)
+        return "---";
+    // Return filename without leading path
+    const char *p = strrchr(_paths[index], '/');
+    return p ? (p + 1) : _paths[index];
+}
+
+
+========================== UIManager.h ==========================
+
+#pragma once
+#include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include "Config.h"
+#include "AudioManager.h"
+
+class UIManager
+{
+public:
+    void begin();
+    void update(const char *trackName, PlayState state,
+                float progress, uint32_t posSec, uint32_t durSec,
+                int volume, uint16_t trackIdx, uint16_t trackTotal);
+
+private:
+    Adafruit_SSD1306 _display{OLED_WIDTH, OLED_HEIGHT, &Wire, -1};
+    unsigned long _lastRefresh = 0;
+
+    // Marquee state
+    int16_t _scrollX = 0;
+    unsigned long _lastScroll = 0;
+    const char *_prevTrackName = nullptr;
+
+    void drawTrackName(const char *name);
+    void drawProgressBar(float progress, uint32_t posSec, uint32_t durSec);
+    void drawControls(PlayState state);
+    void formatTime(uint32_t sec, char *buf, size_t len);
+};
+
+
+========================== UIManager.cpp ==========================
+
+#include "UIManager.h"
+
+// ── Tiny 5×5 icons stored in PROGMEM ──────────────────────
+// Prev icon: |◀◀  (8x8 bitmap)
+static const uint8_t PROGMEM icon_prev[] = {
+    0b00100100,
+    0b01100110,
+    0b11101110,
+    0b01100110,
+    0b00100100,
+    0b00000000,
+    0b00000000,
+    0b00000000};
+
+// Next icon: ▶▶|  (8x8 bitmap)
+static const uint8_t PROGMEM icon_next[] = {
+    0b00100100,
+    0b01100110,
+    0b01110111,
+    0b01100110,
+    0b00100100,
+    0b00000000,
+    0b00000000,
+    0b00000000};
+
+// Play icon: ▶  (8x8 bitmap)
+static const uint8_t PROGMEM icon_play[] = {
+    0b01000000,
+    0b01100000,
+    0b01110000,
+    0b01111000,
+    0b01110000,
+    0b01100000,
+    0b01000000,
+    0b00000000};
+
+// Pause icon: ▐▐  (8x8 bitmap)
+static const uint8_t PROGMEM icon_pause[] = {
+    0b01100110,
+    0b01100110,
+    0b01100110,
+    0b01100110,
+    0b01100110,
+    0b01100110,
+    0b01100110,
+    0b00000000};
+
+// Stop icon: ■  (8x8 bitmap)
+static const uint8_t PROGMEM icon_stop[] = {
+    0b01111110,
+    0b01111110,
+    0b01111110,
+    0b01111110,
+    0b01111110,
+    0b01111110,
+    0b01111110,
+    0b00000000};
+
+void UIManager::begin()
+{
+    delay(250); // Allow display to power up before I2C init
+    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+
+    // Scan I2C bus — helps diagnose wrong address or bad wiring
+    Serial.println(F("[UI] Scanning I2C bus..."));
+    bool found = false;
+    for (uint8_t addr = 1; addr < 127; addr++)
+    {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0)
+        {
+            Serial.printf("[UI] Found device at 0x%02X\n", addr);
+            found = true;
+        }
+    }
+    if (!found)
+        Serial.println(F("[UI] No I2C devices found! Check wiring."));
+
+    if (!_display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR))
+    {
+        Serial.println(F("[UI] SSD1306 init failed (buffer alloc?)"));
+        return;
+    }
+    _display.clearDisplay();
+    _display.setTextColor(SSD1306_WHITE);
+    _display.setTextSize(1);
+    _display.setCursor(20, 12);
+    _display.print(F("MP3 Player"));
+    _display.display();
+    Serial.println(F("[UI] Display initialized OK"));
+}
+
+void UIManager::update(const char *trackName, PlayState state,
+                       float progress, uint32_t posSec, uint32_t durSec,
+                       int volume, uint16_t trackIdx, uint16_t trackTotal)
+{
+    unsigned long now = millis();
+    if (now - _lastRefresh < UI_REFRESH_MS)
+        return;
+    _lastRefresh = now;
+
+    _display.clearDisplay();
+
+    //  Row 1 (y=0..9): Track name with marquee
+    drawTrackName(trackName);
+
+    //  Row 2 (y=11..20): Progress bar + time
+    drawProgressBar(progress, posSec, durSec);
+
+    //  Row 3 (y=23..31): Transport controls
+    drawControls(state);
+
+    _display.display();
+}
+
+// ── Row 1: Track name / scrolling marquee ─────────────────
+void UIManager::drawTrackName(const char *name)
+{
+    // Reset scroll if track changed
+    if (name != _prevTrackName)
+    {
+        _scrollX = 0;
+        _lastScroll = millis();
+        _prevTrackName = name;
+    }
+
+    _display.setTextSize(1); // 6px wide per char
+    _display.setTextWrap(false);
+    int16_t textW = strlen(name) * 6;
+
+    if (textW <= OLED_WIDTH)
+    {
+        // Fits — center it
+        _display.setCursor((OLED_WIDTH - textW) / 2, 0);
+        _display.print(name);
+    }
+    else
+    {
+        // Scrolling marquee
+        unsigned long now = millis();
+        if (now - _lastScroll >= SCROLL_STEP_MS)
+        {
+            _lastScroll = now;
+            _scrollX--;
+            // Reset after full scroll + small gap
+            if (_scrollX < -(textW + 30))
+            {
+                _scrollX = OLED_WIDTH;
+            }
+        }
+        _display.setCursor(_scrollX, 0);
+        _display.print(name);
+    }
+}
+
+// ── Row 2: Progress bar (80%) + time (20%) ────────────────
+void UIManager::drawProgressBar(float progress, uint32_t posSec, uint32_t durSec)
+{
+    const int barY = 15;
+    const int barH = 6;
+    const int barW = (OLED_WIDTH * 80) / 100; // 80% of width = ~102px
+
+    // Draw bar outline
+    _display.drawRect(0, barY, barW, barH, SSD1306_WHITE);
+
+    // Fill proportional
+    int fillW = (int)(progress * (barW - 2));
+    if (fillW > 0)
+    {
+        _display.fillRect(1, barY + 1, fillW, barH - 2, SSD1306_WHITE);
+    }
+
+    // Time display in remaining 20%
+    char posBuf[6];
+    formatTime(posSec, posBuf, sizeof(posBuf));
+
+    _display.setTextSize(1);
+    _display.setCursor(barW + 2, barY);
+    _display.print(posBuf);
+}
+
+// ── Row 3: Transport icons centered ───────────────────────
+void UIManager::drawControls(PlayState state)
+{
+    const int y = 26;
+    const int iconW = 8;
+    const int spacing = 20;
+    int totalW = iconW * 3 + spacing * 2;
+    int startX = (OLED_WIDTH - totalW) / 2;
+
+    // Prev
+    _display.drawBitmap(startX, y, icon_prev, 8, 8, SSD1306_WHITE);
+
+    // Play/Pause/Stop
+    const uint8_t *centerIcon;
+    switch (state)
+    {
+    case PlayState::PLAYING:
+        centerIcon = icon_pause;
+        break;
+    case PlayState::PAUSED:
+        centerIcon = icon_play;
+        break;
+    default:
+        centerIcon = icon_play; // STOPPED: show play icon (ready to play)
+        break;
+    }
+    _display.drawBitmap(startX + iconW + spacing, y, centerIcon, 8, 8, SSD1306_WHITE);
+
+    // Next
+    _display.drawBitmap(startX + (iconW + spacing) * 2, y, icon_next, 8, 8, SSD1306_WHITE);
+}
+
+// ── Time formatter MM:SS ──────────────────────────────────
+void UIManager::formatTime(uint32_t sec, char *buf, size_t len)
+{
+    uint32_t m = sec / 60;
+    uint32_t s = sec % 60;
+    snprintf(buf, len, "%u:%02u", m, s);
+}
+
+
+========================== InputManager.h ==========================
+
+#pragma once
+#include <Arduino.h>
+#include "Config.h"
+
+// Callback types for input events
+typedef void (*ButtonCallback)();
+typedef void (*EncoderCallback)(int direction); // +1 or -1
+
+class InputManager
+{
+public:
+    void begin();
+    void update(); // call from loop()
+
+    void onNextPress(ButtonCallback cb);
+    void onPrevPress(ButtonCallback cb);
+    void onRotaryClick(ButtonCallback cb);
+    void onRotaryTurn(EncoderCallback cb);
+
+private:
+    // Debounced button state
+    struct Button
+    {
+        uint8_t pin;
+        bool lastStable;
+        bool lastReading;
+        unsigned long lastChangeMs;
+        ButtonCallback callback;
+    };
+
+    Button _btnNext;
+    Button _btnPrev;
+    Button _btnRotSw;
+
+    void initButton(Button &btn, uint8_t pin);
+    void updateButton(Button &btn);
+
+    // Rotary via interrupts
+    static void IRAM_ATTR isrRotary();
+    static volatile int _encoderDelta;
+    EncoderCallback _encoderCb = nullptr;
+};
+
+
+========================== InputManager.cpp ==========================
+
+#include "InputManager.h"
+
+volatile int InputManager::_encoderDelta = 0;
+
+// ISR for rotary encoder — Gray-code reading
+void IRAM_ATTR InputManager::isrRotary()
+{
+    static uint8_t prevState = 0;
+    uint8_t a = digitalRead(PIN_ROT_CLK);
+    uint8_t b = digitalRead(PIN_ROT_DT);
+    uint8_t curState = (a << 1) | b;
+
+    // Valid transitions in Gray code sequence
+    // 00→01→11→10 = CW,  00→10→11→01 = CCW
+    uint8_t combined = (prevState << 2) | curState;
+    switch (combined)
+    {
+    case 0b0001:
+    case 0b0111:
+    case 0b1110:
+    case 0b1000:
+        _encoderDelta++;
+        break;
+    case 0b0010:
+    case 0b1011:
+    case 0b1101:
+    case 0b0100:
+        _encoderDelta--;
+        break;
+    }
+    prevState = curState;
+}
+
+void InputManager::initButton(Button &btn, uint8_t pin)
+{
+    btn.pin = pin;
+    pinMode(pin, INPUT_PULLUP);
+    btn.lastStable = HIGH; // Assume released (active-LOW buttons)
+    btn.lastReading = HIGH;
+    btn.lastChangeMs = millis(); // Prevent false trigger at boot
+    btn.callback = nullptr;
+}
+
+void InputManager::begin()
+{
+    initButton(_btnNext, PIN_BTN_NEXT);
+    initButton(_btnPrev, PIN_BTN_PREV);
+    initButton(_btnRotSw, PIN_ROT_SW);
+
+    pinMode(PIN_ROT_CLK, INPUT_PULLUP);
+    pinMode(PIN_ROT_DT, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(PIN_ROT_CLK), isrRotary, CHANGE);
+    attachInterrupt(digitalPinToInterrupt(PIN_ROT_DT), isrRotary, CHANGE);
+}
+
+void InputManager::updateButton(Button &btn)
+{
+    bool reading = digitalRead(btn.pin);
+    if (reading != btn.lastReading)
+    {
+        btn.lastChangeMs = millis();
+    }
+    btn.lastReading = reading;
+
+    if ((millis() - btn.lastChangeMs) > DEBOUNCE_MS)
+    {
+        // Detect falling edge (button press, active LOW)
+        if (!reading && btn.lastStable)
+        {
+            if (btn.callback)
+                btn.callback();
+        }
+        btn.lastStable = reading;
+    }
+}
+
+void InputManager::update()
+{
+    updateButton(_btnNext);
+    updateButton(_btnPrev);
+    updateButton(_btnRotSw);
+
+    // Process accumulated encoder ticks
+    noInterrupts();
+    int delta = _encoderDelta;
+    _encoderDelta = 0;
+    interrupts();
+
+    // Post-process: 4 raw ticks = 1 detent on most encoders
+    // Send callback per detent
+    static int accumulator = 0;
+    accumulator += delta;
+    while (accumulator >= 4)
+    {
+        accumulator -= 4;
+        if (_encoderCb)
+            _encoderCb(1);
+    }
+    while (accumulator <= -4)
+    {
+        accumulator += 4;
+        if (_encoderCb)
+            _encoderCb(-1);
+    }
+}
+
+void InputManager::onNextPress(ButtonCallback cb) { _btnNext.callback = cb; }
+void InputManager::onPrevPress(ButtonCallback cb) { _btnPrev.callback = cb; }
+void InputManager::onRotaryClick(ButtonCallback cb) { _btnRotSw.callback = cb; }
+void InputManager::onRotaryTurn(EncoderCallback cb) { _encoderCb = cb; }
