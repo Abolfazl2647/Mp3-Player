@@ -15,7 +15,9 @@ void AppController::onPrev()
 }
 void AppController::onPlayPause()
 {
+#if DEBUG_SERIAL
     Serial.println(F("[App] onPlayPause triggered"));
+#endif
     if (_instance)
         _instance->togglePlayPause();
 }
@@ -34,8 +36,10 @@ void AppController::begin()
 {
     _instance = this;
 
+#if DEBUG_SERIAL
     Serial.begin(115200);
     Serial.println(F("\n=== MP3 Player ==="));
+#endif
 
     _ui.begin();
 
@@ -59,7 +63,9 @@ void AppController::begin()
 
     startAudioTask();
 
+#if DEBUG_SERIAL
     Serial.printf("[App] Ready. %d tracks indexed.\n", _sd.getTrackCount());
+#endif
 }
 
 void AppController::update()
@@ -135,29 +141,39 @@ void AppController::prevTrack()
 
 void AppController::togglePlayPause()
 {
+#if DEBUG_SERIAL
     Serial.println(F("[App] togglePlayPause() entered"));
+#endif
 
     // Short press while BT menu open → select menu item
     if (_ui.isBtMenuOpen())
     {
+#if DEBUG_SERIAL
         Serial.println(F("[App] BT menu open: routing click to BT UI action"));
+#endif
         UIAction action = _ui.onBtClick(_bt);
         handleBtAction(action);
         return;
     }
 
     uint16_t total = _sd.getTrackCount();
+#if DEBUG_SERIAL
     Serial.printf("[App] Track count before refresh: %u\n", (unsigned)total);
+#endif
     if (total == 0)
     {
+#if DEBUG_SERIAL
         Serial.println(F("[App] Track count is 0, retrying SD index..."));
+#endif
         if (!_sd.begin())
         {
             Serial.println(F("[App] ERROR: SD re-index failed"));
             return;
         }
         total = _sd.getTrackCount();
+#if DEBUG_SERIAL
         Serial.printf("[App] Track count after refresh: %u\n", (unsigned)total);
+#endif
         if (total == 0)
         {
             Serial.println(F("[App] ERROR: No tracks available"));
@@ -168,7 +184,9 @@ void AppController::togglePlayPause()
     if (_currentTrack >= total)
     {
         _currentTrack = 0;
+#if DEBUG_SERIAL
         Serial.println(F("[App] Current track index reset to 0"));
+#endif
     }
 
     const char *path = _sd.getTrackPath(_currentTrack);
@@ -177,16 +195,23 @@ void AppController::togglePlayPause()
         Serial.printf("[App] ERROR: getTrackPath returned null for index %u\n", (unsigned)_currentTrack);
         return;
     }
+#if DEBUG_SERIAL
     Serial.printf("[App] Track path: %s\n", path);
+#endif
 
     PlayState st = _audio.getState();
+#if DEBUG_SERIAL
     Serial.printf("[App] Audio state before action: %d\n", (int)st);
+#endif
 
     // MP3 should own I2S when user requests play/resume.
     if (st == PlayState::STOPPED || st == PlayState::PAUSED)
     {
+#if DEBUG_SERIAL
         Serial.println(F("[App] Releasing BT I2S for MP3"));
+#endif
         _bt.releaseI2S();
+        _audio.reinitI2S();
         delay(100);
     }
 
@@ -194,20 +219,28 @@ void AppController::togglePlayPause()
     {
     case PlayState::STOPPED:
         _started = true;
+#if DEBUG_SERIAL
         Serial.println(F("[App] Transition STOPPED -> PLAYING (play)"));
+#endif
         _audio.play(path);
         break;
     case PlayState::PLAYING:
+#if DEBUG_SERIAL
         Serial.println(F("[App] Transition PLAYING -> PAUSED"));
+#endif
         _audio.pause();
         break;
     case PlayState::PAUSED:
+#if DEBUG_SERIAL
         Serial.println(F("[App] Transition PAUSED -> PLAYING (resume)"));
+#endif
         _audio.resume();
         break;
     }
 
+#if DEBUG_SERIAL
     Serial.printf("[App] Audio state after action: %d\n", (int)_audio.getState());
+#endif
 }
 
 void AppController::handleLongPress()

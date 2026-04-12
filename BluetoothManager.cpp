@@ -1,6 +1,8 @@
 #include "BluetoothManager.h"
+#include "driver/i2s.h"
 
 static const uint8_t BT_DEVICE_NAME_MAX = 31;
+static const uint32_t BT_PAIR_TIMEOUT_MS = 35000;
 
 BluetoothManager *BluetoothManager::_self = nullptr;
 
@@ -33,13 +35,21 @@ bool BluetoothManager::ensureSinkRunning()
     _sink.start(BT_FRIENDLY_NAME);
     _sinkStarted = true;
 
+    // Ensure the Classic BT stack name matches the advertised sink name.
+    esp_bt_dev_set_device_name(BT_FRIENDLY_NAME);
+
     if (!_gapRegistered)
     {
         esp_bt_gap_register_callback(onGapEvent);
         _gapRegistered = true;
     }
 
+    configureSecurity();
+    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+
+#if DEBUG_SERIAL
     Serial.println(F("[BT] A2DP sink started"));
+#endif
     return true;
 }
 
@@ -50,11 +60,20 @@ void BluetoothManager::releaseI2S()
         return;
     }
 
+#if DEBUG_SERIAL
     Serial.println(F("[BT] Releasing BT audio path"));
+#endif
+
+    // Aggressively release I2S so ESP8266Audio can reacquire it for MP3 playback.
+    i2s_driver_uninstall(I2S_NUM_0);
+
     _sink.set_output_active(false);
     _sink.disconnect();
     delay(50);
     _sink.end();
+
+    // Ensure the BT-owned I2S driver is fully gone before MP3 starts.
+    i2s_driver_uninstall(I2S_NUM_0);
     delay(150);
 
     _sinkStarted = false;
@@ -66,9 +85,17 @@ void BluetoothManager::update()
 {
     unsigned long now = millis();
 
-    if (_state == BT_AUTO_CONNECTING || _state == BT_PAIRING)
+    if (_state == BT_AUTO_CONNECTING)
     {
         if (!_connected && (now - _stateStartMs) > BT_AUTO_CONNECT_TIMEOUT_MS)
+        {
+            setState(BT_FAILED, "BT: Failed");
+        }
+    }
+
+    if (_state == BT_PAIRING)
+    {
+        if (!_connected && (now - _stateStartMs) > BT_PAIR_TIMEOUT_MS)
         {
             setState(BT_FAILED, "BT: Failed");
         }
@@ -161,10 +188,7 @@ bool BluetoothManager::connectToDevice(const String &name, const String &mac)
         return false;
     }
 
-    if (_state == BT_SCANNING)
-    {
-        stopScan();
-    }
+    const bool wasScanning = (_state == BT_SCANNING);
 
     esp_bd_addr_t bda = {0};
     if (!parseMac(mac, bda))
@@ -177,6 +201,16 @@ bool BluetoothManager::connectToDevice(const String &name, const String &mac)
     _pendingMac = mac;
 
     setState(BT_PAIRING, "Pairing...");
+
+    // Discovery/connect overlap can break pairing on some headsets (including Sony).
+    if (wasScanning)
+    {
+        _connectAfterDiscoveryStop = true;
+        stopScan();
+        return true;
+    }
+
+    clearBondIfPresent(bda);
 
     esp_err_t err = esp_a2d_sink_connect(bda);
     if (err != ESP_OK)
@@ -206,7 +240,9 @@ void BluetoothManager::stop()
     }
 
     releaseI2S();
+#if DEBUG_SERIAL
     Serial.println(F("BT disconnected"));
+#endif
 }
 
 BTState BluetoothManager::getState() const
@@ -378,6 +414,13 @@ void BluetoothManager::handleGapEvent(esp_bt_gap_cb_event_t event, esp_bt_gap_cb
     {
         if (param->disc_st_chg.state == ESP_BT_GAP_DISCOVERY_STOPPED)
         {
+            if (_connectAfterDiscoveryStop)
+            {
+                _connectAfterDiscoveryStop = false;
+                connectPendingDevice();
+                return;
+            }
+
             if (_state == BT_SCANNING)
             {
                 if (_foundCount == 0)
@@ -385,6 +428,42 @@ void BluetoothManager::handleGapEvent(esp_bt_gap_cb_event_t event, esp_bt_gap_cb
                 else
                     setState(BT_DEVICE_LIST, "Select device");
             }
+        }
+    }
+    else if (event == ESP_BT_GAP_CFM_REQ_EVT)
+    {
+        Serial.printf("[BT_PAIR] CFM_REQ from %s num_val=%u\n", macToString(param->cfm_req.bda).c_str(), param->cfm_req.num_val);
+        esp_bt_gap_ssp_confirm_reply(param->cfm_req.bda, true);
+        Serial.println(F("[BT_PAIR] CFM_REQ auto-accepted"));
+    }
+    else if (event == ESP_BT_GAP_PIN_REQ_EVT)
+    {
+        Serial.printf("[BT_PAIR] PIN_REQ from %s min_16_digit=%d\n", macToString(param->pin_req.bda).c_str(), param->pin_req.min_16_digit ? 1 : 0);
+        esp_bt_pin_code_t pin_code;
+        pin_code[0] = '0';
+        pin_code[1] = '0';
+        pin_code[2] = '0';
+        pin_code[3] = '0';
+        esp_bt_gap_pin_reply(param->pin_req.bda, true, 4, pin_code);
+        Serial.println(F("[BT_PAIR] PIN reply sent (0000)"));
+    }
+    else if (event == ESP_BT_GAP_KEY_NOTIF_EVT)
+    {
+        Serial.printf("[BT_PAIR] KEY_NOTIF passkey=%06u from %s\n", param->key_notif.passkey, macToString(param->key_notif.bda).c_str());
+    }
+    else if (event == ESP_BT_GAP_AUTH_CMPL_EVT)
+    {
+        Serial.printf("[BT_PAIR] AUTH_CMPL status=%d device=%s (%s)\n",
+                      (int)param->auth_cmpl.stat,
+                      (const char *)param->auth_cmpl.device_name,
+                      macToString(param->auth_cmpl.bda).c_str());
+        if (!param->auth_cmpl.stat)
+        {
+            setState(BT_FAILED, "Pairing failed");
+        }
+        else
+        {
+            Serial.println(F("[BT_PAIR] Authentication complete"));
         }
     }
 }
@@ -410,9 +489,17 @@ void BluetoothManager::handleA2dpConnection(esp_a2d_connection_state_t state)
             setState(BT_PAIRING, "Pairing...");
         }
     }
-    else
+    else if (state == ESP_A2D_CONNECTION_STATE_DISCONNECTED)
     {
         _connected = false;
+        _connectAfterDiscoveryStop = false;
+
+        if (_state == BT_CONNECTED)
+        {
+            setState(BT_IDLE, "BT: Idle");
+            return;
+        }
+
         if (_state == BT_PAIRING || _state == BT_AUTO_CONNECTING)
         {
             setState(BT_FAILED, "Failed");
@@ -422,6 +509,83 @@ void BluetoothManager::handleA2dpConnection(esp_a2d_connection_state_t state)
             setState(BT_IDLE, "BT: Idle");
         }
     }
+}
+
+void BluetoothManager::configureSecurity()
+{
+    if (_securityConfigured)
+    {
+        return;
+    }
+
+    // Headset pairing works best with NoInputNoOutput on this hardware profile.
+    esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_NONE;
+    esp_bt_gap_set_security_param(ESP_BT_SP_IOCAP_MODE, &iocap, sizeof(iocap));
+
+#if defined(ESP_BT_SP_AUTH_REQ) && defined(ESP_BT_SP_AUTH_REQ_AUTH)
+    uint8_t authReq = ESP_BT_SP_AUTH_REQ_AUTH;
+    esp_bt_gap_set_security_param((esp_bt_sp_param_t)ESP_BT_SP_AUTH_REQ, &authReq, sizeof(authReq));
+#endif
+
+    esp_bt_pin_type_t pinType = ESP_BT_PIN_TYPE_FIXED;
+    esp_bt_pin_code_t pinCode;
+    pinCode[0] = '0';
+    pinCode[1] = '0';
+    pinCode[2] = '0';
+    pinCode[3] = '0';
+    esp_bt_gap_set_pin(pinType, 4, pinCode);
+
+    _securityConfigured = true;
+}
+
+bool BluetoothManager::connectPendingDevice()
+{
+    esp_bd_addr_t bda = {0};
+    if (!parseMac(_pendingMac, bda))
+    {
+        setState(BT_FAILED, "Bad MAC");
+        return false;
+    }
+
+    clearBondIfPresent(bda);
+
+    esp_err_t err = esp_a2d_sink_connect(bda);
+    if (err != ESP_OK)
+    {
+        setState(BT_FAILED, "Connect fail");
+        return false;
+    }
+
+    return true;
+}
+
+void BluetoothManager::clearBondIfPresent(const esp_bd_addr_t bda)
+{
+    int devNum = esp_bt_gap_get_bond_device_num();
+    if (devNum <= 0)
+    {
+        return;
+    }
+
+    esp_bd_addr_t *devList = new esp_bd_addr_t[devNum];
+    if (!devList)
+    {
+        return;
+    }
+
+    if (esp_bt_gap_get_bond_device_list(&devNum, devList) == ESP_OK)
+    {
+        for (int i = 0; i < devNum; i++)
+        {
+            if (memcmp(devList[i], bda, sizeof(esp_bd_addr_t)) == 0)
+            {
+                esp_bt_gap_remove_bond_device(devList[i]);
+                break;
+            }
+        }
+    }
+
+    delete[] devList;
 }
 
 bool BluetoothManager::parseMac(const String &mac, esp_bd_addr_t out)

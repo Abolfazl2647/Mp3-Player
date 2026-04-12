@@ -61,6 +61,9 @@ private:
     void setState(BTState s, const String &msg);
     void loadPaired();
     void savePaired(const String &name, const String &mac);
+    void configureSecurity();
+    bool connectPendingDevice();
+    void clearBondIfPresent(const esp_bd_addr_t bda);
     void handleGapEvent(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param);
     void handleA2dpConnection(esp_a2d_connection_state_t state);
 
@@ -89,4 +92,6 @@ private:
 
     bool _sinkStarted = false;
     bool _gapRegistered = false;
+    bool _securityConfigured = false;
+    bool _connectAfterDiscoveryStop = false;
 };

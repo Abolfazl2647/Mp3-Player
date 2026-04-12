@@ -58,6 +58,8 @@ void loop()
 
 #pragma once
 
+#define DEBUG_SERIAL 0
+
 // ============================================================
 //  MP3 Player — Pin Mapping & Configuration
 //  Board: ESP32-D0WD-V3
@@ -119,7 +121,7 @@ void loop()
 #define VOLUME_STEP 1
 
 // ── SD / file settings ───────────────────────────────────
-#define MAX_TRACKS 500
+#define MAX_TRACKS 200
 #define MP3_ROOT_DIR "/"
 
 // ── UI timing (ms) ───────────────────────────────────────
@@ -128,7 +130,7 @@ void loop()
 #define DEBOUNCE_MS 50     // button debounce
 
 // ── FreeRTOS task settings ────────────────────────────────
-#define AUDIO_TASK_STACK 8192
+#define AUDIO_TASK_STACK 4096
 #define AUDIO_TASK_PRIO 2 // higher than default (1)
 #define AUDIO_TASK_CORE 1 // run audio on core 1
 
@@ -210,7 +212,9 @@ void AppController::onPrev()
 }
 void AppController::onPlayPause()
 {
+#if DEBUG_SERIAL
     Serial.println(F("[App] onPlayPause triggered"));
+#endif
     if (_instance)
         _instance->togglePlayPause();
 }
@@ -229,8 +233,10 @@ void AppController::begin()
 {
     _instance = this;
 
+#if DEBUG_SERIAL
     Serial.begin(115200);
     Serial.println(F("\n=== MP3 Player ==="));
+#endif
 
     _ui.begin();
 
@@ -254,7 +260,9 @@ void AppController::begin()
 
     startAudioTask();
 
+#if DEBUG_SERIAL
     Serial.printf("[App] Ready. %d tracks indexed.\n", _sd.getTrackCount());
+#endif
 }
 
 void AppController::update()
@@ -330,29 +338,39 @@ void AppController::prevTrack()
 
 void AppController::togglePlayPause()
 {
+#if DEBUG_SERIAL
     Serial.println(F("[App] togglePlayPause() entered"));
+#endif
 
     // Short press while BT menu open → select menu item
     if (_ui.isBtMenuOpen())
     {
+#if DEBUG_SERIAL
         Serial.println(F("[App] BT menu open: routing click to BT UI action"));
+#endif
         UIAction action = _ui.onBtClick(_bt);
         handleBtAction(action);
         return;
     }
 
     uint16_t total = _sd.getTrackCount();
+#if DEBUG_SERIAL
     Serial.printf("[App] Track count before refresh: %u\n", (unsigned)total);
+#endif
     if (total == 0)
     {
+#if DEBUG_SERIAL
         Serial.println(F("[App] Track count is 0, retrying SD index..."));
+#endif
         if (!_sd.begin())
         {
             Serial.println(F("[App] ERROR: SD re-index failed"));
             return;
         }
         total = _sd.getTrackCount();
+#if DEBUG_SERIAL
         Serial.printf("[App] Track count after refresh: %u\n", (unsigned)total);
+#endif
         if (total == 0)
         {
             Serial.println(F("[App] ERROR: No tracks available"));
@@ -363,7 +381,9 @@ void AppController::togglePlayPause()
     if (_currentTrack >= total)
     {
         _currentTrack = 0;
+#if DEBUG_SERIAL
         Serial.println(F("[App] Current track index reset to 0"));
+#endif
     }
 
     const char *path = _sd.getTrackPath(_currentTrack);
@@ -372,16 +392,23 @@ void AppController::togglePlayPause()
         Serial.printf("[App] ERROR: getTrackPath returned null for index %u\n", (unsigned)_currentTrack);
         return;
     }
+#if DEBUG_SERIAL
     Serial.printf("[App] Track path: %s\n", path);
+#endif
 
     PlayState st = _audio.getState();
+#if DEBUG_SERIAL
     Serial.printf("[App] Audio state before action: %d\n", (int)st);
+#endif
 
     // MP3 should own I2S when user requests play/resume.
     if (st == PlayState::STOPPED || st == PlayState::PAUSED)
     {
+#if DEBUG_SERIAL
         Serial.println(F("[App] Releasing BT I2S for MP3"));
+#endif
         _bt.releaseI2S();
+        _audio.reinitI2S();
         delay(100);
     }
 
@@ -389,20 +416,28 @@ void AppController::togglePlayPause()
     {
     case PlayState::STOPPED:
         _started = true;
+#if DEBUG_SERIAL
         Serial.println(F("[App] Transition STOPPED -> PLAYING (play)"));
+#endif
         _audio.play(path);
         break;
     case PlayState::PLAYING:
+#if DEBUG_SERIAL
         Serial.println(F("[App] Transition PLAYING -> PAUSED"));
+#endif
         _audio.pause();
         break;
     case PlayState::PAUSED:
+#if DEBUG_SERIAL
         Serial.println(F("[App] Transition PAUSED -> PLAYING (resume)"));
+#endif
         _audio.resume();
         break;
     }
 
+#if DEBUG_SERIAL
     Serial.printf("[App] Audio state after action: %d\n", (int)_audio.getState());
+#endif
 }
 
 void AppController::handleLongPress()
@@ -498,6 +533,7 @@ public:
     void resume();
     void setVolume(int vol);
     int getVolume() const;
+    bool reinitI2S();
 
     PlayState getState() const;
     bool isPlaying() const;
@@ -531,6 +567,7 @@ private:
 #include "AudioFileSourceSD.h"
 #include "AudioGeneratorMP3.h"
 #include "AudioOutputI2S.h"
+#include "driver/i2s.h"
 
 // ESP8266Audio objects — kept in .cpp to avoid header pollution
 static AudioFileSourceSD *_source = nullptr;
@@ -539,17 +576,10 @@ static AudioOutputI2S *_out = nullptr;
 
 void AudioManager::begin()
 {
-    _out = new AudioOutputI2S();
-    if (!_out)
+    if (!reinitI2S())
     {
-        Serial.println(F("[Audio] ERROR: AudioOutputI2S allocation failed"));
         return;
     }
-
-    _out->SetPinout(PIN_I2S_BCLK, PIN_I2S_LRCK, PIN_I2S_DOUT);
-    _out->begin();
-    _out->SetRate(44100);
-    _out->SetGain(((float)_volume) / (float)VOLUME_MAX);
 
     _mp3 = new AudioGeneratorMP3();
     if (!_mp3)
@@ -559,12 +589,47 @@ void AudioManager::begin()
     }
 
     _state = PlayState::STOPPED;
+#if DEBUG_SERIAL
     Serial.println(F("[Audio] I2S initialized OK"));
+#endif
+}
+
+bool AudioManager::reinitI2S()
+{
+    if (_out)
+    {
+        _out->stop();
+        delete _out;
+        _out = nullptr;
+    }
+
+    // If BT previously owned I2S, clear stale driver state first.
+    i2s_driver_uninstall(I2S_NUM_0);
+    delay(50);
+
+    _out = new AudioOutputI2S();
+    if (!_out)
+    {
+        Serial.println(F("[Audio] ERROR: AudioOutputI2S allocation failed"));
+        return false;
+    }
+
+    _out->SetPinout(PIN_I2S_BCLK, PIN_I2S_LRCK, PIN_I2S_DOUT);
+    _out->begin();
+    _out->SetRate(44100);
+    _out->SetGain(((float)_volume) / (float)VOLUME_MAX);
+
+#if DEBUG_SERIAL
+    Serial.println(F("[Audio] I2S reinitialized"));
+#endif
+    return true;
 }
 
 void AudioManager::play(const char *path)
 {
+#if DEBUG_SERIAL
     Serial.printf("[Audio] play() called: %s\n", path ? path : "(null)");
+#endif
 
     if (!path || path[0] == '\0')
     {
@@ -575,7 +640,9 @@ void AudioManager::play(const char *path)
     stop(); // clean up any previous playback
 
     bool exists = SD.exists(path);
+#if DEBUG_SERIAL
     Serial.printf("[Audio] File exists: %d\n", exists ? 1 : 0);
+#endif
     if (!exists)
     {
         Serial.printf("[Audio] ERROR: File not found: %s\n", path);
@@ -592,7 +659,9 @@ void AudioManager::play(const char *path)
     if (f)
     {
         _fileSize = f.size();
+#if DEBUG_SERIAL
         Serial.printf("[Audio] File size: %u bytes\n", (unsigned)_fileSize);
+#endif
         f.close();
     }
     else
@@ -616,7 +685,21 @@ void AudioManager::play(const char *path)
     _out->SetGain(((float)_volume) / (float)VOLUME_MAX);
 
     bool beginOk = _mp3->begin(_source, _out);
+#if DEBUG_SERIAL
     Serial.printf("[Audio] MP3 begin result: %s\n", beginOk ? "true" : "false");
+#endif
+
+    if (!beginOk)
+    {
+#if DEBUG_SERIAL
+        Serial.println(F("[Audio] MP3 begin failed, retry after I2S reinit"));
+#endif
+        reinitI2S();
+        beginOk = _mp3->begin(_source, _out);
+#if DEBUG_SERIAL
+        Serial.printf("[Audio] MP3 begin retry result: %s\n", beginOk ? "true" : "false");
+#endif
+    }
 
     if (beginOk)
     {
@@ -624,7 +707,9 @@ void AudioManager::play(const char *path)
         _finished = false;
         _playStartMs = millis();
         _pausedElapsed = 0;
+#if DEBUG_SERIAL
         Serial.printf("[Audio] PLAYBACK STARTED: %s\n", path);
+#endif
     }
     else
     {
@@ -786,7 +871,9 @@ void AudioManager::loop()
                 delete _source;
                 _source = nullptr;
             }
+#if DEBUG_SERIAL
             Serial.println(F("[Audio] Track finished"));
+#endif
         }
     }
 }
@@ -1915,6 +2002,9 @@ private:
     void setState(BTState s, const String &msg);
     void loadPaired();
     void savePaired(const String &name, const String &mac);
+    void configureSecurity();
+    bool connectPendingDevice();
+    void clearBondIfPresent(const esp_bd_addr_t bda);
     void handleGapEvent(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param);
     void handleA2dpConnection(esp_a2d_connection_state_t state);
 
@@ -1943,6 +2033,8 @@ private:
 
     bool _sinkStarted = false;
     bool _gapRegistered = false;
+    bool _securityConfigured = false;
+    bool _connectAfterDiscoveryStop = false;
 };
 
 
@@ -1950,8 +2042,10 @@ private:
 ========================== BluetoothManager.cpp ==========================
 
 #include "BluetoothManager.h"
+#include "driver/i2s.h"
 
 static const uint8_t BT_DEVICE_NAME_MAX = 31;
+static const uint32_t BT_PAIR_TIMEOUT_MS = 35000;
 
 BluetoothManager *BluetoothManager::_self = nullptr;
 
@@ -1984,13 +2078,21 @@ bool BluetoothManager::ensureSinkRunning()
     _sink.start(BT_FRIENDLY_NAME);
     _sinkStarted = true;
 
+    // Ensure the Classic BT stack name matches the advertised sink name.
+    esp_bt_dev_set_device_name(BT_FRIENDLY_NAME);
+
     if (!_gapRegistered)
     {
         esp_bt_gap_register_callback(onGapEvent);
         _gapRegistered = true;
     }
 
+    configureSecurity();
+    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+
+#if DEBUG_SERIAL
     Serial.println(F("[BT] A2DP sink started"));
+#endif
     return true;
 }
 
@@ -2001,11 +2103,20 @@ void BluetoothManager::releaseI2S()
         return;
     }
 
+#if DEBUG_SERIAL
     Serial.println(F("[BT] Releasing BT audio path"));
+#endif
+
+    // Aggressively release I2S so ESP8266Audio can reacquire it for MP3 playback.
+    i2s_driver_uninstall(I2S_NUM_0);
+
     _sink.set_output_active(false);
     _sink.disconnect();
     delay(50);
     _sink.end();
+
+    // Ensure the BT-owned I2S driver is fully gone before MP3 starts.
+    i2s_driver_uninstall(I2S_NUM_0);
     delay(150);
 
     _sinkStarted = false;
@@ -2017,9 +2128,17 @@ void BluetoothManager::update()
 {
     unsigned long now = millis();
 
-    if (_state == BT_AUTO_CONNECTING || _state == BT_PAIRING)
+    if (_state == BT_AUTO_CONNECTING)
     {
         if (!_connected && (now - _stateStartMs) > BT_AUTO_CONNECT_TIMEOUT_MS)
+        {
+            setState(BT_FAILED, "BT: Failed");
+        }
+    }
+
+    if (_state == BT_PAIRING)
+    {
+        if (!_connected && (now - _stateStartMs) > BT_PAIR_TIMEOUT_MS)
         {
             setState(BT_FAILED, "BT: Failed");
         }
@@ -2112,10 +2231,7 @@ bool BluetoothManager::connectToDevice(const String &name, const String &mac)
         return false;
     }
 
-    if (_state == BT_SCANNING)
-    {
-        stopScan();
-    }
+    const bool wasScanning = (_state == BT_SCANNING);
 
     esp_bd_addr_t bda = {0};
     if (!parseMac(mac, bda))
@@ -2128,6 +2244,16 @@ bool BluetoothManager::connectToDevice(const String &name, const String &mac)
     _pendingMac = mac;
 
     setState(BT_PAIRING, "Pairing...");
+
+    // Discovery/connect overlap can break pairing on some headsets (including Sony).
+    if (wasScanning)
+    {
+        _connectAfterDiscoveryStop = true;
+        stopScan();
+        return true;
+    }
+
+    clearBondIfPresent(bda);
 
     esp_err_t err = esp_a2d_sink_connect(bda);
     if (err != ESP_OK)
@@ -2157,7 +2283,9 @@ void BluetoothManager::stop()
     }
 
     releaseI2S();
+#if DEBUG_SERIAL
     Serial.println(F("BT disconnected"));
+#endif
 }
 
 BTState BluetoothManager::getState() const
@@ -2329,6 +2457,13 @@ void BluetoothManager::handleGapEvent(esp_bt_gap_cb_event_t event, esp_bt_gap_cb
     {
         if (param->disc_st_chg.state == ESP_BT_GAP_DISCOVERY_STOPPED)
         {
+            if (_connectAfterDiscoveryStop)
+            {
+                _connectAfterDiscoveryStop = false;
+                connectPendingDevice();
+                return;
+            }
+
             if (_state == BT_SCANNING)
             {
                 if (_foundCount == 0)
@@ -2336,6 +2471,42 @@ void BluetoothManager::handleGapEvent(esp_bt_gap_cb_event_t event, esp_bt_gap_cb
                 else
                     setState(BT_DEVICE_LIST, "Select device");
             }
+        }
+    }
+    else if (event == ESP_BT_GAP_CFM_REQ_EVT)
+    {
+        Serial.printf("[BT_PAIR] CFM_REQ from %s num_val=%u\n", macToString(param->cfm_req.bda).c_str(), param->cfm_req.num_val);
+        esp_bt_gap_ssp_confirm_reply(param->cfm_req.bda, true);
+        Serial.println(F("[BT_PAIR] CFM_REQ auto-accepted"));
+    }
+    else if (event == ESP_BT_GAP_PIN_REQ_EVT)
+    {
+        Serial.printf("[BT_PAIR] PIN_REQ from %s min_16_digit=%d\n", macToString(param->pin_req.bda).c_str(), param->pin_req.min_16_digit ? 1 : 0);
+        esp_bt_pin_code_t pin_code;
+        pin_code[0] = '0';
+        pin_code[1] = '0';
+        pin_code[2] = '0';
+        pin_code[3] = '0';
+        esp_bt_gap_pin_reply(param->pin_req.bda, true, 4, pin_code);
+        Serial.println(F("[BT_PAIR] PIN reply sent (0000)"));
+    }
+    else if (event == ESP_BT_GAP_KEY_NOTIF_EVT)
+    {
+        Serial.printf("[BT_PAIR] KEY_NOTIF passkey=%06u from %s\n", param->key_notif.passkey, macToString(param->key_notif.bda).c_str());
+    }
+    else if (event == ESP_BT_GAP_AUTH_CMPL_EVT)
+    {
+        Serial.printf("[BT_PAIR] AUTH_CMPL status=%d device=%s (%s)\n",
+                      (int)param->auth_cmpl.stat,
+                      (const char *)param->auth_cmpl.device_name,
+                      macToString(param->auth_cmpl.bda).c_str());
+        if (!param->auth_cmpl.stat)
+        {
+            setState(BT_FAILED, "Pairing failed");
+        }
+        else
+        {
+            Serial.println(F("[BT_PAIR] Authentication complete"));
         }
     }
 }
@@ -2361,9 +2532,17 @@ void BluetoothManager::handleA2dpConnection(esp_a2d_connection_state_t state)
             setState(BT_PAIRING, "Pairing...");
         }
     }
-    else
+    else if (state == ESP_A2D_CONNECTION_STATE_DISCONNECTED)
     {
         _connected = false;
+        _connectAfterDiscoveryStop = false;
+
+        if (_state == BT_CONNECTED)
+        {
+            setState(BT_IDLE, "BT: Idle");
+            return;
+        }
+
         if (_state == BT_PAIRING || _state == BT_AUTO_CONNECTING)
         {
             setState(BT_FAILED, "Failed");
@@ -2373,6 +2552,83 @@ void BluetoothManager::handleA2dpConnection(esp_a2d_connection_state_t state)
             setState(BT_IDLE, "BT: Idle");
         }
     }
+}
+
+void BluetoothManager::configureSecurity()
+{
+    if (_securityConfigured)
+    {
+        return;
+    }
+
+    // Headset pairing works best with NoInputNoOutput on this hardware profile.
+    esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_NONE;
+    esp_bt_gap_set_security_param(ESP_BT_SP_IOCAP_MODE, &iocap, sizeof(iocap));
+
+#if defined(ESP_BT_SP_AUTH_REQ) && defined(ESP_BT_SP_AUTH_REQ_AUTH)
+    uint8_t authReq = ESP_BT_SP_AUTH_REQ_AUTH;
+    esp_bt_gap_set_security_param((esp_bt_sp_param_t)ESP_BT_SP_AUTH_REQ, &authReq, sizeof(authReq));
+#endif
+
+    esp_bt_pin_type_t pinType = ESP_BT_PIN_TYPE_FIXED;
+    esp_bt_pin_code_t pinCode;
+    pinCode[0] = '0';
+    pinCode[1] = '0';
+    pinCode[2] = '0';
+    pinCode[3] = '0';
+    esp_bt_gap_set_pin(pinType, 4, pinCode);
+
+    _securityConfigured = true;
+}
+
+bool BluetoothManager::connectPendingDevice()
+{
+    esp_bd_addr_t bda = {0};
+    if (!parseMac(_pendingMac, bda))
+    {
+        setState(BT_FAILED, "Bad MAC");
+        return false;
+    }
+
+    clearBondIfPresent(bda);
+
+    esp_err_t err = esp_a2d_sink_connect(bda);
+    if (err != ESP_OK)
+    {
+        setState(BT_FAILED, "Connect fail");
+        return false;
+    }
+
+    return true;
+}
+
+void BluetoothManager::clearBondIfPresent(const esp_bd_addr_t bda)
+{
+    int devNum = esp_bt_gap_get_bond_device_num();
+    if (devNum <= 0)
+    {
+        return;
+    }
+
+    esp_bd_addr_t *devList = new esp_bd_addr_t[devNum];
+    if (!devList)
+    {
+        return;
+    }
+
+    if (esp_bt_gap_get_bond_device_list(&devNum, devList) == ESP_OK)
+    {
+        for (int i = 0; i < devNum; i++)
+        {
+            if (memcmp(devList[i], bda, sizeof(esp_bd_addr_t)) == 0)
+            {
+                esp_bt_gap_remove_bond_device(devList[i]);
+                break;
+            }
+        }
+    }
+
+    delete[] devList;
 }
 
 bool BluetoothManager::parseMac(const String &mac, esp_bd_addr_t out)
@@ -2398,194 +2654,4 @@ String BluetoothManager::macToString(const uint8_t *bda)
     snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X", bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]);
     return String(buf);
 }
-
-
-
-========================== BTStorage.h ==========================
-
-#pragma once
-
-#include <Arduino.h>
-#include <Preferences.h>
-#include "Config.h"
-
-struct BTSavedDevice
-{
-    String name;
-    String mac;
-    bool valid = false;
-};
-
-class BTStorage
-{
-public:
-    void begin();
-    void end();
-
-    uint8_t loadDevices(BTSavedDevice *outDevices, uint8_t maxCount);
-    bool saveDevice(const String &name, const String &mac);
-    bool removeDevice(uint8_t index);
-
-    int8_t getLastIndex();
-    void setLastIndex(int8_t index);
-
-private:
-    Preferences _prefs;
-    bool _opened = false;
-
-    String keyName(uint8_t index) const;
-    String keyMac(uint8_t index) const;
-};
-
-
-
-========================== BTStorage.cpp ==========================
-
-#include "BTStorage.h"
-
-void BTStorage::begin()
-{
-    if (!_opened)
-    {
-        _opened = _prefs.begin("btstore", false);
-    }
-}
-
-void BTStorage::end()
-{
-    if (_opened)
-    {
-        _prefs.end();
-        _opened = false;
-    }
-}
-
-String BTStorage::keyName(uint8_t index) const
-{
-    return String("n") + index;
-}
-
-String BTStorage::keyMac(uint8_t index) const
-{
-    return String("m") + index;
-}
-
-uint8_t BTStorage::loadDevices(BTSavedDevice *outDevices, uint8_t maxCount)
-{
-    if (!_opened || !outDevices)
-    {
-        return 0;
-    }
-
-    uint8_t count = 0;
-    for (uint8_t i = 0; i < BT_MAX_SAVED_DEVICES && i < maxCount; i++)
-    {
-        String name = _prefs.getString(keyName(i).c_str(), "");
-        String mac = _prefs.getString(keyMac(i).c_str(), "");
-
-        if (name.length() > 0 && mac.length() > 0)
-        {
-            outDevices[count].name = name;
-            outDevices[count].mac = mac;
-            outDevices[count].valid = true;
-            count++;
-        }
-    }
-
-    return count;
-}
-
-bool BTStorage::saveDevice(const String &name, const String &mac)
-{
-    if (!_opened || name.isEmpty() || mac.isEmpty())
-    {
-        return false;
-    }
-
-    BTSavedDevice devices[BT_MAX_SAVED_DEVICES];
-    uint8_t count = loadDevices(devices, BT_MAX_SAVED_DEVICES);
-
-    for (uint8_t i = 0; i < count; i++)
-    {
-        if (devices[i].mac == mac)
-        {
-            _prefs.putString(keyName(i).c_str(), name);
-            _prefs.putString(keyMac(i).c_str(), mac);
-            setLastIndex(i);
-            return true;
-        }
-    }
-
-    if (count < BT_MAX_SAVED_DEVICES)
-    {
-        _prefs.putString(keyName(count).c_str(), name);
-        _prefs.putString(keyMac(count).c_str(), mac);
-        setLastIndex(count);
-        return true;
-    }
-
-    for (uint8_t i = 1; i < BT_MAX_SAVED_DEVICES; i++)
-    {
-        String prevName = _prefs.getString(keyName(i).c_str(), "");
-        String prevMac = _prefs.getString(keyMac(i).c_str(), "");
-        _prefs.putString(keyName(i - 1).c_str(), prevName);
-        _prefs.putString(keyMac(i - 1).c_str(), prevMac);
-    }
-
-    uint8_t slot = BT_MAX_SAVED_DEVICES - 1;
-    _prefs.putString(keyName(slot).c_str(), name);
-    _prefs.putString(keyMac(slot).c_str(), mac);
-    setLastIndex(slot);
-    return true;
-}
-
-bool BTStorage::removeDevice(uint8_t index)
-{
-    if (!_opened || index >= BT_MAX_SAVED_DEVICES)
-    {
-        return false;
-    }
-
-    for (uint8_t i = index + 1; i < BT_MAX_SAVED_DEVICES; i++)
-    {
-        String n = _prefs.getString(keyName(i).c_str(), "");
-        String m = _prefs.getString(keyMac(i).c_str(), "");
-        _prefs.putString(keyName(i - 1).c_str(), n);
-        _prefs.putString(keyMac(i - 1).c_str(), m);
-    }
-
-    uint8_t last = BT_MAX_SAVED_DEVICES - 1;
-    _prefs.remove(keyName(last).c_str());
-    _prefs.remove(keyMac(last).c_str());
-
-    int8_t lastIdx = getLastIndex();
-    if (lastIdx == (int8_t)index)
-    {
-        setLastIndex(-1);
-    }
-    else if (lastIdx > (int8_t)index)
-    {
-        setLastIndex(lastIdx - 1);
-    }
-
-    return true;
-}
-
-int8_t BTStorage::getLastIndex()
-{
-    if (!_opened)
-    {
-        return -1;
-    }
-    return _prefs.getChar("last", -1);
-}
-
-void BTStorage::setLastIndex(int8_t index)
-{
-    if (_opened)
-    {
-        _prefs.putChar("last", index);
-    }
-}
-
 

@@ -3,6 +3,7 @@
 #include "AudioFileSourceSD.h"
 #include "AudioGeneratorMP3.h"
 #include "AudioOutputI2S.h"
+#include "driver/i2s.h"
 
 // ESP8266Audio objects — kept in .cpp to avoid header pollution
 static AudioFileSourceSD *_source = nullptr;
@@ -11,17 +12,10 @@ static AudioOutputI2S *_out = nullptr;
 
 void AudioManager::begin()
 {
-    _out = new AudioOutputI2S();
-    if (!_out)
+    if (!reinitI2S())
     {
-        Serial.println(F("[Audio] ERROR: AudioOutputI2S allocation failed"));
         return;
     }
-
-    _out->SetPinout(PIN_I2S_BCLK, PIN_I2S_LRCK, PIN_I2S_DOUT);
-    _out->begin();
-    _out->SetRate(44100);
-    _out->SetGain(((float)_volume) / (float)VOLUME_MAX);
 
     _mp3 = new AudioGeneratorMP3();
     if (!_mp3)
@@ -31,12 +25,47 @@ void AudioManager::begin()
     }
 
     _state = PlayState::STOPPED;
+#if DEBUG_SERIAL
     Serial.println(F("[Audio] I2S initialized OK"));
+#endif
+}
+
+bool AudioManager::reinitI2S()
+{
+    if (_out)
+    {
+        _out->stop();
+        delete _out;
+        _out = nullptr;
+    }
+
+    // If BT previously owned I2S, clear stale driver state first.
+    i2s_driver_uninstall(I2S_NUM_0);
+    delay(50);
+
+    _out = new AudioOutputI2S();
+    if (!_out)
+    {
+        Serial.println(F("[Audio] ERROR: AudioOutputI2S allocation failed"));
+        return false;
+    }
+
+    _out->SetPinout(PIN_I2S_BCLK, PIN_I2S_LRCK, PIN_I2S_DOUT);
+    _out->begin();
+    _out->SetRate(44100);
+    _out->SetGain(((float)_volume) / (float)VOLUME_MAX);
+
+#if DEBUG_SERIAL
+    Serial.println(F("[Audio] I2S reinitialized"));
+#endif
+    return true;
 }
 
 void AudioManager::play(const char *path)
 {
+#if DEBUG_SERIAL
     Serial.printf("[Audio] play() called: %s\n", path ? path : "(null)");
+#endif
 
     if (!path || path[0] == '\0')
     {
@@ -47,7 +76,9 @@ void AudioManager::play(const char *path)
     stop(); // clean up any previous playback
 
     bool exists = SD.exists(path);
+#if DEBUG_SERIAL
     Serial.printf("[Audio] File exists: %d\n", exists ? 1 : 0);
+#endif
     if (!exists)
     {
         Serial.printf("[Audio] ERROR: File not found: %s\n", path);
@@ -64,7 +95,9 @@ void AudioManager::play(const char *path)
     if (f)
     {
         _fileSize = f.size();
+#if DEBUG_SERIAL
         Serial.printf("[Audio] File size: %u bytes\n", (unsigned)_fileSize);
+#endif
         f.close();
     }
     else
@@ -88,7 +121,21 @@ void AudioManager::play(const char *path)
     _out->SetGain(((float)_volume) / (float)VOLUME_MAX);
 
     bool beginOk = _mp3->begin(_source, _out);
+#if DEBUG_SERIAL
     Serial.printf("[Audio] MP3 begin result: %s\n", beginOk ? "true" : "false");
+#endif
+
+    if (!beginOk)
+    {
+#if DEBUG_SERIAL
+        Serial.println(F("[Audio] MP3 begin failed, retry after I2S reinit"));
+#endif
+        reinitI2S();
+        beginOk = _mp3->begin(_source, _out);
+#if DEBUG_SERIAL
+        Serial.printf("[Audio] MP3 begin retry result: %s\n", beginOk ? "true" : "false");
+#endif
+    }
 
     if (beginOk)
     {
@@ -96,7 +143,9 @@ void AudioManager::play(const char *path)
         _finished = false;
         _playStartMs = millis();
         _pausedElapsed = 0;
+#if DEBUG_SERIAL
         Serial.printf("[Audio] PLAYBACK STARTED: %s\n", path);
+#endif
     }
     else
     {
@@ -258,7 +307,9 @@ void AudioManager::loop()
                 delete _source;
                 _source = nullptr;
             }
+#if DEBUG_SERIAL
             Serial.println(F("[Audio] Track finished"));
+#endif
         }
     }
 }

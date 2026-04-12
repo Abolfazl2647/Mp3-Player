@@ -19,6 +19,7 @@ public:
     void resume();
     void setVolume(int vol);
     int getVolume() const;
+    bool reinitI2S();
 
     PlayState getState() const;
     bool isPlaying() const;

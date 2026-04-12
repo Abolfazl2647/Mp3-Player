@@ -1,5 +1,7 @@
 #pragma once
 
+#define DEBUG_SERIAL 0
+
 // ============================================================
 //  MP3 Player — Pin Mapping & Configuration
 //  Board: ESP32-D0WD-V3
@@ -61,7 +63,7 @@
 #define VOLUME_STEP 1
 
 // ── SD / file settings ───────────────────────────────────
-#define MAX_TRACKS 500
+#define MAX_TRACKS 200
 #define MP3_ROOT_DIR "/"
 
 // ── UI timing (ms) ───────────────────────────────────────
@@ -70,7 +72,7 @@
 #define DEBOUNCE_MS 50     // button debounce
 
 // ── FreeRTOS task settings ────────────────────────────────
-#define AUDIO_TASK_STACK 8192
+#define AUDIO_TASK_STACK 4096
 #define AUDIO_TASK_PRIO 2 // higher than default (1)
 #define AUDIO_TASK_CORE 1 // run audio on core 1
 
