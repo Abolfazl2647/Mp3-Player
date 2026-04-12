@@ -12,44 +12,95 @@ static AudioOutputI2S *_out = nullptr;
 void AudioManager::begin()
 {
     _out = new AudioOutputI2S();
+    if (!_out)
+    {
+        Serial.println(F("[Audio] ERROR: AudioOutputI2S allocation failed"));
+        return;
+    }
+
     _out->SetPinout(PIN_I2S_BCLK, PIN_I2S_LRCK, PIN_I2S_DOUT);
+    _out->begin();
+    _out->SetRate(44100);
     _out->SetGain(((float)_volume) / (float)VOLUME_MAX);
+
     _mp3 = new AudioGeneratorMP3();
+    if (!_mp3)
+    {
+        Serial.println(F("[Audio] ERROR: AudioGeneratorMP3 allocation failed"));
+        return;
+    }
+
     _state = PlayState::STOPPED;
+    Serial.println(F("[Audio] I2S initialized OK"));
 }
 
 void AudioManager::play(const char *path)
 {
+    Serial.printf("[Audio] play() called: %s\n", path ? path : "(null)");
+
+    if (!path || path[0] == '\0')
+    {
+        Serial.println(F("[Audio] ERROR: Empty path"));
+        return;
+    }
+
     stop(); // clean up any previous playback
+
+    bool exists = SD.exists(path);
+    Serial.printf("[Audio] File exists: %d\n", exists ? 1 : 0);
+    if (!exists)
+    {
+        Serial.printf("[Audio] ERROR: File not found: %s\n", path);
+        return;
+    }
+
+    if (!_out || !_mp3)
+    {
+        Serial.println(F("[Audio] ERROR: Audio pipeline not initialized"));
+        return;
+    }
 
     File f = SD.open(path);
     if (f)
     {
         _fileSize = f.size();
+        Serial.printf("[Audio] File size: %u bytes\n", (unsigned)_fileSize);
         f.close();
     }
     else
     {
         _fileSize = 0;
+        Serial.printf("[Audio] ERROR: SD.open failed: %s\n", path);
+        return;
     }
 
     strncpy(_currentPath, path, sizeof(_currentPath) - 1);
     _currentPath[sizeof(_currentPath) - 1] = '\0';
 
     _source = new AudioFileSourceSD(path);
+    if (!_source)
+    {
+        Serial.println(F("[Audio] ERROR: Failed to create AudioFileSourceSD"));
+        return;
+    }
+
+    // Keep I2S channel persistent; avoid re-initializing on each track change.
     _out->SetGain(((float)_volume) / (float)VOLUME_MAX);
 
-    if (_mp3->begin(_source, _out))
+    bool beginOk = _mp3->begin(_source, _out);
+    Serial.printf("[Audio] MP3 begin result: %s\n", beginOk ? "true" : "false");
+
+    if (beginOk)
     {
         _state = PlayState::PLAYING;
         _finished = false;
         _playStartMs = millis();
         _pausedElapsed = 0;
-        Serial.printf("[Audio] Playing: %s\n", path);
+        Serial.printf("[Audio] PLAYBACK STARTED: %s\n", path);
     }
     else
     {
-        Serial.println(F("[Audio] Failed to begin MP3"));
+        Serial.println(F("[Audio] ERROR: MP3 begin failed"));
         delete _source;
         _source = nullptr;
         _state = PlayState::STOPPED;
@@ -61,6 +112,10 @@ void AudioManager::stop()
     if (_mp3 && _mp3->isRunning())
     {
         _mp3->stop();
+    }
+    if (_out)
+    {
+        _out->stop();
     }
     if (_source)
     {

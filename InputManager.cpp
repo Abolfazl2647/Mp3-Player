@@ -38,6 +38,8 @@ void InputManager::initButton(Button &btn, uint8_t pin)
     btn.lastStable = HIGH; // Assume released (active-LOW buttons)
     btn.lastReading = HIGH;
     btn.lastChangeMs = millis(); // Prevent false trigger at boot
+    btn.pressStartMs = 0;
+    btn.longPressFired = false;
     btn.callback = nullptr;
 }
 
@@ -64,12 +66,48 @@ void InputManager::updateButton(Button &btn)
 
     if ((millis() - btn.lastChangeMs) > DEBOUNCE_MS)
     {
-        // Detect falling edge (button press, active LOW)
+        // ── Next / Prev: fire on press-down (original behaviour) ──────
+        if (&btn != &_btnRotSw)
+        {
+            if (!reading && btn.lastStable)
+            {
+                if (btn.callback)
+                    btn.callback();
+            }
+            btn.lastStable = reading;
+            return;
+        }
+
+        // ── Rotary switch: distinguish short vs long press ────────────
         if (!reading && btn.lastStable)
         {
-            if (btn.callback)
-                btn.callback();
+            // Key just went down: start timing only
+            btn.pressStartMs = millis();
+            btn.longPressFired = false;
         }
+
+        // While held: fire long press once when threshold reached
+        if (!reading && !btn.longPressFired)
+        {
+            if ((millis() - btn.pressStartMs) >= LONG_PRESS_MS)
+            {
+                btn.longPressFired = true;
+                if (_rotLongPressCb)
+                    _rotLongPressCb();
+            }
+        }
+
+        // On release: short press only if long press did not fire
+        if (reading && !btn.lastStable)
+        {
+            unsigned long heldMs = millis() - btn.pressStartMs;
+            if (!btn.longPressFired && heldMs < LONG_PRESS_MS)
+            {
+                if (btn.callback)
+                    btn.callback();
+            }
+        }
+
         btn.lastStable = reading;
     }
 }
@@ -107,4 +145,5 @@ void InputManager::update()
 void InputManager::onNextPress(ButtonCallback cb) { _btnNext.callback = cb; }
 void InputManager::onPrevPress(ButtonCallback cb) { _btnPrev.callback = cb; }
 void InputManager::onRotaryClick(ButtonCallback cb) { _btnRotSw.callback = cb; }
+void InputManager::onRotaryLongPress(ButtonCallback cb) { _rotLongPressCb = cb; }
 void InputManager::onRotaryTurn(EncoderCallback cb) { _encoderCb = cb; }

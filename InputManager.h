@@ -14,7 +14,8 @@ public:
 
     void onNextPress(ButtonCallback cb);
     void onPrevPress(ButtonCallback cb);
-    void onRotaryClick(ButtonCallback cb);
+    void onRotaryClick(ButtonCallback cb);     // short press
+    void onRotaryLongPress(ButtonCallback cb); // long press (>=LONG_PRESS_MS)
     void onRotaryTurn(EncoderCallback cb);
 
 private:
@@ -25,12 +26,16 @@ private:
         bool lastStable;
         bool lastReading;
         unsigned long lastChangeMs;
+        unsigned long pressStartMs; // when key went down
+        bool longPressFired;        // suppress short press if long fired
         ButtonCallback callback;
     };
 
     Button _btnNext;
     Button _btnPrev;
     Button _btnRotSw;
+
+    ButtonCallback _rotLongPressCb = nullptr;
 
     void initButton(Button &btn, uint8_t pin);
     void updateButton(Button &btn);

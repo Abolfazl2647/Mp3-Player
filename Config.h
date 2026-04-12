@@ -33,7 +33,7 @@
 #define PIN_I2C_SDA 21
 #define PIN_I2C_SCL 22
 #define OLED_WIDTH 128
-#define OLED_HEIGHT 32
+#define OLED_HEIGHT 64
 #define OLED_ADDR 0x3C
 
 // ── SPI (SD card) ─────────────────────────────────────────
@@ -73,3 +73,12 @@
 #define AUDIO_TASK_STACK 8192
 #define AUDIO_TASK_PRIO 2 // higher than default (1)
 #define AUDIO_TASK_CORE 1 // run audio on core 1
+
+// ── Rotary long press ────────────────────────────────────
+#define LONG_PRESS_MS 1100 // ms held before long-press fires
+
+// ── Bluetooth settings ────────────────────────────────────
+#define BT_AUTO_CONNECT_TIMEOUT_MS 8000 // boot reconnect timeout
+#define BT_SCAN_TIMEOUT_MS 25000        // scan timeout
+#define BT_MAX_SAVED_DEVICES 3
+#define BT_FRIENDLY_NAME "ESP32-MP3"
