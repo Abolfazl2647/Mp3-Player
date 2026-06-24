@@ -39,7 +39,6 @@ bool AudioManager::reinitI2S()
         _out = nullptr;
     }
 
-    // If BT previously owned I2S, clear stale driver state first.
     i2s_driver_uninstall(I2S_NUM_0);
     delay(50);
 
@@ -204,6 +203,12 @@ void AudioManager::resume()
         _playStartMs = millis() - _pausedElapsed;
         // Re-open file and seek to saved position
         _source = new AudioFileSourceSD(_currentPath);
+        if (!_source)
+        {
+            Serial.println(F("[Audio] Resume failed: source alloc"));
+            _state = PlayState::STOPPED;
+            return;
+        }
         _source->seek(_pauseFilePos, SEEK_SET);
         _out->SetGain(((float)_volume) / (float)VOLUME_MAX);
         if (_mp3->begin(_source, _out))

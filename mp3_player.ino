@@ -14,7 +14,7 @@
 //    - No external pull-up resistors needed
 //    - PCM5102A: tie SCK to GND, FMT to GND (I2S standard) - XSMT pin to 3V3
 //    - Power ESP32 + PCM5102A via VIN (5V)
-//    - Power OLED + SD + buttons via 3.3V
+//    - Power OLED + Micro SD WEMOS D1 + buttons via 3.3V
 //
 // ============================================================
 // ================ WIRING SUMMARY ===============
@@ -22,7 +22,7 @@
 // ========== Display (I2C) ==========
 // | SDA → GPIO 21 | SCL → GPIO 22 | VCC → 3.3V | GND → GND |
 
-// ========== SD Card (SPI) ==========
+// ========== Micro SD WEMOS D1 (SPI) ==========
 // | CS → GPIO 5 | MOSI → GPIO 23 | MISO → GPIO 19 | SCK → GPIO 18 | VCC → 3.3V | GND → GND |
 
 // ========== PCM5102A (I2S) ==========

@@ -19,7 +19,6 @@ public:
     void resume();
     void setVolume(int vol);
     int getVolume() const;
-    bool reinitI2S();
 
     PlayState getState() const;
     bool isPlaying() const;
@@ -34,6 +33,7 @@ public:
     bool trackFinished();
 
 private:
+    bool reinitI2S();
     volatile PlayState _state = PlayState::STOPPED; // volatile: accessed from both cores
     int _volume = VOLUME_DEFAULT;
     volatile bool _finished = false;

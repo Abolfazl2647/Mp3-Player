@@ -13,10 +13,10 @@
 //  ├─────────────┼──────┼────────────────────────────────┤
 //  │ I2C SDA     │ 21   │ OLED display                   │
 //  │ I2C SCL     │ 22   │ OLED display                   │
-//  │ SPI MOSI    │ 23   │ SD card (VSPI default)         │
-//  │ SPI MISO    │ 19   │ SD card (VSPI default)         │
-//  │ SPI SCK     │ 18   │ SD card (VSPI default)         │
-//  │ SPI CS      │  5   │ SD card chip select            │
+//  │ SPI MOSI    │ 23   │ Micro SD WEMOS D1 (VSPI)       │
+//  │ SPI MISO    │ 19   │ Micro SD WEMOS D1 (VSPI)       │
+//  │ SPI SCK     │ 18   │ Micro SD WEMOS D1 (VSPI)       │
+//  │ SPI CS      │  5   │ Micro SD WEMOS D1 chip select  │
 //  │ I2S BCLK    │ 26   │ PCM5102A bit clock             │
 //  │ I2S LRCK    │ 25   │ PCM5102A word select           │
 //  │ I2S DOUT    │ 27   │ PCM5102A data out              │
@@ -38,9 +38,10 @@
 #define OLED_HEIGHT 64
 #define OLED_ADDR 0x3C
 
-// ── SPI (SD card) ─────────────────────────────────────────
+// ── SPI (Micro SD WEMOS D1) ───────────────────────────────
 #define PIN_SD_CS 5
 // MOSI=23, MISO=19, SCK=18 are VSPI defaults used by SD lib
+// Module powered from 3.3V — no level shifter needed
 
 // ── I2S (PCM5102A DAC) ───────────────────────────────────
 #define PIN_I2S_BCLK 26
@@ -76,11 +77,3 @@
 #define AUDIO_TASK_PRIO 2 // higher than default (1)
 #define AUDIO_TASK_CORE 1 // run audio on core 1
 
-// ── Rotary long press ────────────────────────────────────
-#define LONG_PRESS_MS 1100 // ms held before long-press fires
-
-// ── Bluetooth settings ────────────────────────────────────
-#define BT_AUTO_CONNECT_TIMEOUT_MS 8000 // boot reconnect timeout
-#define BT_SCAN_TIMEOUT_MS 25000        // scan timeout
-#define BT_MAX_SAVED_DEVICES 3
-#define BT_FRIENDLY_NAME "ESP32-MP3"
