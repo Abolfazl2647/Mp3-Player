@@ -3,7 +3,6 @@
 #include "AudioFileSourceSD.h"
 #include "AudioGeneratorMP3.h"
 #include "AudioOutputI2S.h"
-#include "driver/i2s.h"
 
 // ESP8266Audio objects — kept in .cpp to avoid header pollution
 static AudioFileSourceSD *_source = nullptr;
@@ -12,6 +11,14 @@ static AudioOutputI2S *_out = nullptr;
 
 void AudioManager::begin()
 {
+    // Initialize PCM5102A soft mute control (unmute the DAC)
+    pinMode(PIN_PCM_XSMT, OUTPUT);
+    digitalWrite(PIN_PCM_XSMT, HIGH);
+#if DEBUG_SERIAL
+    Serial.println(F("[Audio] PCM5102A XSMT pin (GPIO 2) set to HIGH"));
+    Serial.printf("[Audio] GPIO 2 state: %d\n", digitalRead(PIN_PCM_XSMT));
+#endif
+
     if (!reinitI2S())
     {
         return;
@@ -39,7 +46,6 @@ bool AudioManager::reinitI2S()
         _out = nullptr;
     }
 
-    i2s_driver_uninstall(I2S_NUM_0);
     delay(50);
 
     _out = new AudioOutputI2S();
@@ -50,6 +56,10 @@ bool AudioManager::reinitI2S()
     }
 
     _out->SetPinout(PIN_I2S_BCLK, PIN_I2S_LRCK, PIN_I2S_DOUT);
+#if DEBUG_SERIAL
+    Serial.printf("[Audio] I2S pins set: BCK=%d, LCK=%d, DIN=%d\n",
+                  PIN_I2S_BCLK, PIN_I2S_LRCK, PIN_I2S_DOUT);
+#endif
     _out->begin();
     _out->SetRate(44100);
     _out->SetGain(((float)_volume) / (float)VOLUME_MAX);
@@ -144,6 +154,8 @@ void AudioManager::play(const char *path)
         _pausedElapsed = 0;
 #if DEBUG_SERIAL
         Serial.printf("[Audio] PLAYBACK STARTED: %s\n", path);
+        Serial.printf("[Audio] Volume: %d/%d\n", _volume, VOLUME_MAX);
+        Serial.println(F("[Audio] *** CHECK FOR I2S SIGNALS ON GPIO 26, 25, 27 ***"));
 #endif
     }
     else

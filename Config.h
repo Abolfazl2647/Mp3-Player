@@ -1,6 +1,6 @@
 #pragma once
 
-#define DEBUG_SERIAL 0
+#define DEBUG_SERIAL 1
 
 // ============================================================
 //  MP3 Player — Pin Mapping & Configuration
@@ -20,6 +20,7 @@
 //  │ I2S BCLK    │ 26   │ PCM5102A bit clock             │
 //  │ I2S LRCK    │ 25   │ PCM5102A word select           │
 //  │ I2S DOUT    │ 27   │ PCM5102A data out              │
+//  │ PCM XSMT    │  2   │ PCM5102A soft mute (unmute)    │
 //  │ ROT CLK     │ 32   │ Rotary encoder A (interrupt)   │
 //  │ ROT DT      │ 33   │ Rotary encoder B (interrupt)   │
 //  │ ROT SW      │ 13   │ Rotary push (internal pull-up) │
@@ -47,6 +48,7 @@
 #define PIN_I2S_BCLK 26
 #define PIN_I2S_LRCK 25
 #define PIN_I2S_DOUT 27
+#define PIN_PCM_XSMT 2  // PCM5102A soft mute control (unmute)
 
 // ── Rotary encoder ────────────────────────────────────────
 #define PIN_ROT_CLK 32

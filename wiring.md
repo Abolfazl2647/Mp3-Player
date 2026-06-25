@@ -10,9 +10,11 @@
 
 | Rail | Supplies |
 |------|----------|
-| 5V (VIN) | ESP32 DevKit, PCM5102A |
-| 3.3V | OLED display, Micro SD WEMOS D1, rotary encoder, buttons |
+| 5V (VIN) | ESP32 DevKit (recommended for stable operation) |
+| 3.3V (ESP32 output) | OLED display, Micro SD WEMOS D1, rotary encoder, buttons, **PCM5102A** |
 | GND | All components share a common ground |
+
+**Note:** PCM5102A powered from ESP32's 3.3V output (not 5V) to minimize audio noise/ripple.
 
 ---
 
@@ -52,14 +54,16 @@
 
 | PCM5102A Pin | ESP32 Pin / Voltage | Notes |
 |--------------|---------------------|-------|
-| VIN | 5V | |
-| GND | GND | |
+| VIN | 3.3V | ESP32 3.3V output (cleaner power = less audio noise) |
+| GND | GND | Common ground with ESP32 |
 | BCK | GPIO 26 | I2S bit clock |
 | LCK | GPIO 25 | I2S word select (LRCK) |
 | DIN | GPIO 27 | I2S data |
 | SCK | GND | Tie to GND (no master clock needed) |
 | FMT | GND | Tie to GND (I2S standard format) |
-| XSMT | 3.3V | Soft mute control — tie HIGH to enable output |
+| FLT | GND | Filter select — normal filter mode |
+| DEMP | GND | De-emphasis — disabled |
+| XSMT | GPIO 2 | Soft mute control — controlled by ESP32 (HIGH = unmute) |
 
 ---
 
@@ -79,15 +83,24 @@
 
 ---
 
-### Buttons
+### Buttons (4-Pin Momentary Switches)
 
 | Button | ESP32 Pin | Wiring |
 |--------|-----------|--------|
 | Next Track | GPIO 4 | Between GPIO 4 and GND (internal pull-up) |
 | Prev Track | GPIO 14 | Between GPIO 14 and GND (internal pull-up) |
 
-- No external pull-up resistors needed
-- Active LOW: pin reads LOW when button is pressed
+**4-Pin Button Configuration:**
+- 4-pin buttons have two internally-connected pairs (diagonal pins)
+- Use any **two opposite diagonal pins** (e.g., top-left + bottom-right)
+- One leg → GPIO pin, other leg → GND
+- **No external pull-up resistors needed** — ESP32 provides internal pull-ups
+- **Active LOW:** Pin reads LOW when button is pressed
+
+**To identify the correct pins:**
+- Use a multimeter on continuity mode
+- Press the button → listen for beep (indicates connected pair)
+- Use those pins for wiring
 
 ---
 
@@ -95,6 +108,7 @@
 
 | GPIO | Function | Component |
 |------|----------|-----------|
+| 2 | PCM XSMT | PCM5102A soft mute control |
 | 4 | BTN NEXT | Next button |
 | 5 | SPI CS | SD card chip select |
 | 13 | ROT SW | Rotary encoder push button |
@@ -142,7 +156,33 @@
 
 ## Notes
 
-- All button and encoder pins use ESP32 internal pull-ups — no external resistors needed.
-- PCM5102A SCK and FMT must be tied to GND; XSMT must be tied to 3.3V to unmute the DAC output.
-- Power the ESP32 DevKit and PCM5102A from 5V; all other modules from the ESP32's 3.3V regulator.
-- SD card must be formatted as FAT32.
+- **All button and encoder pins use ESP32 internal pull-ups** — no external resistors needed.
+- **PCM5102A Control Pins:**
+  - SCK, FMT, FLT, DEMP must be tied to GND (standard I2S configuration)
+  - XSMT controlled by GPIO 2 (HIGH = unmute, LOW = mute)
+- **Power Configuration:**
+  - ESP32 VIN: 5V (or USB) for stable operation
+  - PCM5102A: **3.3V from ESP32 output** (cleaner power = less audio distortion/noise)
+  - All other modules: 3.3V from ESP32
+  - **Common GND:** All components share the same ground rail
+  - **Optional:** Add 100µF capacitor across PCM5102A VIN–GND for additional noise filtering
+
+---
+
+## Audio Quality Tips
+
+**To minimize distortion and noise:**
+1. **Lower software volume** if sound is harsh or clipping (set to 8–12 instead of max)
+2. **Use shielded audio cables** from PCM5102A output to headphone jack
+3. **Add 100µF bypass capacitor** across PCM5102A power pins (+ on VIN, − on GND)
+4. **Keep I2S wires short and close together** to minimize interference
+5. **Ensure solid solder joints** on all I2S pins (BCK, LCK, DIN)
+6. **Check all control pins grounded** (SCK, FMT, FLT, DEMP → GND)
+
+---
+
+## SD Card Format
+
+- **Must be FAT32** with `.mp3` files in root directory (`/`)
+- Max 200 tracks supported
+- MP3 bitrate: 128 kbps or higher recommended

@@ -66,18 +66,20 @@ Powered from 3.3V — no level shifter needed.
 <img src="image/pcm5102a.webp" alt="PCM5102A DAC Module" width="400"/>
 
 High-fidelity stereo DAC (112 dB SNR) driven over I2S. Outputs line-level audio to a 3.5mm jack.
-SCK and FMT must be tied to GND; XSMT tied to 3.3V to unmute the output.
+SCK, FMT, FLT, DEMP must be tied to GND; XSMT controlled by GPIO 2 to unmute the output.
 
 | Pin  | ESP32 GPIO / Rail |
 |------|------------------|
-| VIN  | 5V |
+| VIN  | 3.3V (ESP32 output) |
 | GND  | GND |
 | BCK  | GPIO 26 |
 | LCK  | GPIO 25 |
 | DIN  | GPIO 27 |
 | SCK  | GND (tie) |
 | FMT  | GND (tie) |
-| XSMT | 3.3V (tie) |
+| FLT  | GND (tie) |
+| DEMP | GND (tie) |
+| XSMT | GPIO 2 (software-controlled unmute) |
 
 ---
 
@@ -136,6 +138,61 @@ Install via Arduino Library Manager:
 2. Select board: **ESP32 Dev Module**.
 3. Install the four libraries listed above.
 4. Flash. Serial output is disabled by default (`DEBUG_SERIAL 0` in `Config.h`).
+
+---
+
+## Troubleshooting
+
+### Audio Distortion
+
+**Distortion = sound is harsh, crackling, clipping, or "crunchy"**
+
+#### Fix 1: Lower the Volume (Most Common)
+- Set volume to **8–10** instead of max (21)
+- Distortion goes away? → Issue is **clipping** (DAC output saturated)
+- ESP32's audio output is limited; lower software volume prevents it
+
+#### Fix 2: Use 3.3V Power for PCM5102A (Noise-Related Distortion)
+- ✓ **CORRECT:** PCM5102A VIN → ESP32's **3.3V output** (cleaner power)
+- ✗ **WRONG:** PCM5102A VIN → Raw 5V input (has ripple, causes noise)
+- 5V supplies have more electrical noise; 3.3V from ESP32's LDO is filtered
+
+#### Fix 3: Add a Power Filter Capacitor
+- Solder a **100µF electrolytic capacitor** across PCM5102A VIN and GND
+- **Polarity matters:** + on VIN, − on GND
+- This filters power supply ripple → reduces hum/buzz distortion
+
+#### Fix 4: Use Shielded Audio Cables
+- Connect PCM5102A output → headphone jack with **shielded cables**
+- Unshielded wires pick up EMI and 60 Hz hum from nearby electronics
+- Twist the wires together if shielded cable unavailable
+
+#### Fix 5: Check Solder Joints (I2S Wires)
+- Loose solder on BCK, LCK, DIN pins → noisy I2S signals → distortion
+- Re-solder: GPIO 26 (BCK), GPIO 25 (LCK), GPIO 27 (DIN) to PCM5102A
+- Look for shiny, smooth solder joints (not dull or cracked)
+
+#### Fix 6: Verify All Control Pins are Grounded
+- SCK → GND ✓
+- FMT → GND ✓
+- FLT → GND ✓
+- DEMP → GND ✓
+- Missing ground = wrong DAC mode = possible distortion
+
+#### Fix 7: Check MP3 File Quality
+- Test with a known-good MP3 file
+- Bitrate should be 128 kbps or higher
+- If distortion only on certain files → files are corrupted
+
+### No Audio
+- **XSMT pin not unmuted:** Verify GPIO 2 is connected to PCM5102A XSMT pin
+- **I2S wiring:** Double-check BCK (26), LCK (25), DIN (27) are soldered correctly
+- **Power:** Verify PCM5102A is getting 3.3V on VIN pin
+
+### 4-Pin Button Wiring
+- 4-pin momentary switches have two diagonal pairs of internally-connected pins
+- Use a multimeter on continuity mode to identify which pins connect when pressed
+- Wire one pin to GPIO (4 or 14) and the other to GND
 
 ---
 

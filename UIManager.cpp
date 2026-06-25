@@ -80,11 +80,13 @@ static const uint8_t PROGMEM icon_stop[] = {
 
 void UIManager::begin()
 {
+    Serial.println(F("[UI] Starting I2C init..."));
     delay(250); // Allow display to power up before I2C init
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+    Serial.println(F("[UI] I2C initialized"));
 
-    // Scan I2C bus — helps diagnose wrong address or bad wiring
-    Serial.println(F("[UI] Scanning I2C bus..."));
+    // Scan I2C bus to find what's connected
+    Serial.println(F("[UI] Scanning I2C addresses..."));
     bool found = false;
     for (uint8_t addr = 1; addr < 127; addr++)
     {
@@ -96,23 +98,25 @@ void UIManager::begin()
         }
     }
     if (!found)
-        Serial.println(F("[UI] No I2C devices found! Check wiring."));
+        Serial.println(F("[UI] WARNING: No I2C devices found!"));
 
+    Serial.println(F("[UI] Calling display.begin()..."));
     if (!_display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR))
     {
         Serial.println(F("[UI] SSD1306 init failed (buffer alloc?)"));
         return;
     }
+    Serial.println(F("[UI] Display buffer allocated"));
     _display.clearDisplay();
     _display.setTextColor(SSD1306_WHITE);
 
-    // Show static brand name while the rest of setup() runs.
-    // The animated spinner will play during the first 3 s of loop().
+    // Show static brand name while the rest of setup() runs
     const char *brand = "Rezvani Design";
     int16_t brandX = (OLED_WIDTH - (int16_t)(strlen(brand) * 6)) / 2;
     _display.setTextSize(1);
     _display.setCursor(brandX, 28);
     _display.print(brand);
+    Serial.println(F("[UI] About to call display.display()..."));
     _display.display();
     Serial.println(F("[UI] Display initialized OK"));
 }
