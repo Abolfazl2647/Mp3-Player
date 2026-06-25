@@ -1,6 +1,22 @@
+<style>
+img {
+  max-width: 100%;
+  height: auto;
+  width: 400px;
+  display: block;
+  margin: 20px auto;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+</style>
+
 # ESP32 MP3 Player
 
 A standalone MP3 player built on the ESP32-D0WD-V3, featuring I2S audio output via a PCM5102A DAC, a 128×64 OLED display, SD card playback, and rotary encoder + button controls. Audio decoding runs on a dedicated FreeRTOS task on Core 1, keeping the UI responsive on Core 0.
+
+## Final Product
+
+<img src="image/final.jpg" alt="Completed MP3 Player"/>
 
 ---
 
@@ -20,7 +36,7 @@ A standalone MP3 player built on the ESP32-D0WD-V3, featuring I2S audio output v
 
 ### ESP32 DevKit (ESP32-D0WD-V3)
 
-<img src="image/esp32.jpg" alt="ESP32 DevKit" width="400"/>
+<img src="image/esp32.jpg" alt="ESP32 DevKit"/>
 
 The main microcontroller. Dual-core 240 MHz, Wi-Fi + BT (BT unused here), 38 pins.
 Runs audio decoding on Core 1 and UI/input handling on Core 0.
@@ -29,7 +45,7 @@ Runs audio decoding on Core 1 and UI/input handling on Core 0.
 
 ### 0.96" OLED Display (SSD1306, 128×64, I2C)
 
-<img src="image/oled.jpg" alt="SSD1306 OLED Display" width="400"/>
+<img src="image/oled.jpg" alt="SSD1306 OLED Display"/>
 
 Monochrome 128×64 pixel display driven over I2C.
 Shows track name (with marquee scroll), progress bar, elapsed/total time, volume level, and playback state.
@@ -45,7 +61,7 @@ Shows track name (with marquee scroll), progress bar, elapsed/total time, volume
 
 ### Micro SD Card Module (SPI / WEMOS D1 Shield)
 
-<img src="image/sd_card.png" alt="Micro SD Card Module" width="400"/>
+<img src="image/sd_card.png" alt="Micro SD Card Module"/>
 
 FAT32 micro SD card reader over SPI (VSPI bus). Stores all `.mp3` files in the root directory.
 Powered from 3.3V — no level shifter needed.
@@ -63,7 +79,7 @@ Powered from 3.3V — no level shifter needed.
 
 ### PCM5102A I2S DAC
 
-<img src="image/pcm5102a.webp" alt="PCM5102A DAC Module" width="400"/>
+<img src="image/pcm5102a.webp" alt="PCM5102A DAC Module"/>
 
 High-fidelity stereo DAC (112 dB SNR) driven over I2S. Outputs line-level audio to a 3.5mm jack.
 SCK, FMT, FLT, DEMP must be tied to GND; XSMT controlled by GPIO 2 to unmute the output.
@@ -85,7 +101,7 @@ SCK, FMT, FLT, DEMP must be tied to GND; XSMT controlled by GPIO 2 to unmute the
 
 ### KY-040 Rotary Encoder
 
-<img src="image/rotary_encoder.jpg" alt="KY-040 Rotary Encoder" width="400"/>
+<img src="image/rotary_encoder.jpg" alt="KY-040 Rotary Encoder"/>
 
 Rotary encoder with push button. Rotating adjusts volume / navigates menus; pressing plays/pauses or confirms selection.
 All pins use ESP32 internal pull-ups — no external resistors needed.
@@ -101,7 +117,7 @@ All pins use ESP32 internal pull-ups — no external resistors needed.
 
 ### Tactile Push Buttons
 
-<img src="image/push_button.jpg" alt="Tactile Push Buttons" width="400"/>
+<img src="image/push_button.jpg" alt="Tactile Push Buttons"/>
 
 Two momentary push buttons for Next Track and Previous Track.
 Wired between the GPIO pin and GND; internal pull-ups used (active LOW).
