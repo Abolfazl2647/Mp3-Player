@@ -1,15 +1,3 @@
-<style>
-img {
-  max-width: 100%;
-  height: auto;
-  width: 400px;
-  display: block;
-  margin: 20px auto;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-}
-</style>
-
 # ESP32 MP3 Player
 
 A standalone MP3 player built on the ESP32-D0WD-V3, featuring I2S audio output via a PCM5102A DAC, a 128×64 OLED display, SD card playback, and rotary encoder + button controls. Audio decoding runs on a dedicated FreeRTOS task on Core 1, keeping the UI responsive on Core 0.
