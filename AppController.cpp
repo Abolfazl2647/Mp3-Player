@@ -3,15 +3,30 @@
 AppController *AppController::_instance = nullptr;
 
 // ── Static callback trampolines ───────────────────────────
-void AppController::onNext()
+void AppController::onMenuUp()
 {
     if (_instance)
-        _instance->nextTrack();
+        _instance->menuUp();
 }
-void AppController::onPrev()
+void AppController::onMenuDown()
+{
+    if (_instance)
+        _instance->menuDown();
+}
+void AppController::onMenuSelect()
+{
+    if (_instance)
+        _instance->menuSelect();
+}
+void AppController::onPrevTrack()
 {
     if (_instance)
         _instance->prevTrack();
+}
+void AppController::onNextTrack()
+{
+    if (_instance)
+        _instance->nextTrack();
 }
 void AppController::onPlayPause()
 {
@@ -21,10 +36,15 @@ void AppController::onPlayPause()
     if (_instance)
         _instance->togglePlayPause();
 }
-void AppController::onVolume(int d)
+void AppController::onVolumeUp()
 {
     if (_instance)
-        _instance->changeVolume(d);
+        _instance->changeVolume(1);
+}
+void AppController::onVolumeDown()
+{
+    if (_instance)
+        _instance->changeVolume(-1);
 }
 
 void AppController::begin()
@@ -33,7 +53,7 @@ void AppController::begin()
 
 #if DEBUG_SERIAL
     Serial.begin(115200);
-    Serial.println(F("\n=== MP3 Player ==="));
+    Serial.println(F("\n=== MP3 Player (3-Screen UI) ==="));
 #endif
 
     _ui.begin();
@@ -44,13 +64,28 @@ void AppController::begin()
     _audio.begin();
 
     _input.begin();
-    _input.onNextPress(onNext);
-    _input.onPrevPress(onPrev);
-    _input.onRotaryClick(onPlayPause);
-    _input.onRotaryTurn(onVolume);
+
+    // Wire up menu navigation
+    _input.onMenuUp(onMenuUp);
+    _input.onMenuDown(onMenuDown);
+    _input.onMenuSelect(onMenuSelect);
+
+    // Wire up playback controls (only active in NOW_PLAYING)
+    _input.onPrevTrack(onPrevTrack);
+    _input.onNextTrack(onNextTrack);
+    _input.onPlayPause(onPlayPause);
+
+    // Wire up volume controls
+    _input.onVolumeUp(onVolumeUp);
+    _input.onVolumeDown(onVolumeDown);
 
     _currentTrack = 0;
+    _menuCursor = 0;
+    _menuScrollOffset = 0;
     _started = false;
+
+    _currentScreen = ScreenState::SPLASH;
+    _splashStartMs = millis();
 
     startAudioTask();
 
@@ -62,6 +97,47 @@ void AppController::begin()
 void AppController::update()
 {
     _input.update();
+
+    // Screen state machine
+    switch (_currentScreen)
+    {
+    case ScreenState::SPLASH:
+        updateSplashScreen();
+        break;
+    case ScreenState::TRACK_BROWSER:
+        updateTrackBrowserScreen();
+        break;
+    case ScreenState::NOW_PLAYING:
+        updateNowPlayingScreen();
+        break;
+    }
+}
+
+// ── Screen update methods ─────────────────────────────────
+void AppController::updateSplashScreen()
+{
+    // Show splash for SPLASH_DURATION_MS then auto-transition
+    if (millis() - _splashStartMs >= SPLASH_DURATION_MS)
+    {
+        _currentScreen = ScreenState::TRACK_BROWSER;
+#if DEBUG_SERIAL
+        Serial.println(F("[App] Splash → Track Browser"));
+#endif
+    }
+    _ui.renderSplash();
+}
+
+void AppController::updateTrackBrowserScreen()
+{
+    // Display track browser
+    uint16_t total = _sd.getTrackCount();
+    _ui.renderTrackBrowser(_sd, total, _menuCursor, _menuScrollOffset, MENU_DISPLAY_LINES);
+}
+
+void AppController::updateNowPlayingScreen()
+{
+    // Check for long-press C to return to track browser
+    handleLongPressC();
 
     if (_audio.trackFinished() && _started)
         nextTrack();
@@ -77,7 +153,87 @@ void AppController::update()
         _sd.getTrackCount());
 }
 
-// ── Control methods ───────────────────────────────────────
+// ── Menu navigation methods ───────────────────────────────
+void AppController::menuUp()
+{
+    if (_currentScreen != ScreenState::TRACK_BROWSER)
+        return;
+
+    uint16_t total = _sd.getTrackCount();
+    if (total == 0)
+        return;
+
+    _menuCursor = (_menuCursor - 1 + total) % total;
+
+    // Auto-scroll: if cursor moved above visible area
+    if (_menuCursor < _menuScrollOffset)
+        _menuScrollOffset = _menuCursor;
+
+#if DEBUG_SERIAL
+    Serial.printf("[App] Menu cursor: %d\n", _menuCursor);
+#endif
+}
+
+void AppController::menuDown()
+{
+    if (_currentScreen != ScreenState::TRACK_BROWSER)
+        return;
+
+    uint16_t total = _sd.getTrackCount();
+    if (total == 0)
+        return;
+
+    _menuCursor = (_menuCursor + 1) % total;
+
+    // Auto-scroll: if cursor moved below visible area
+    if (_menuCursor >= _menuScrollOffset + MENU_DISPLAY_LINES)
+        _menuScrollOffset = _menuCursor - MENU_DISPLAY_LINES + 1;
+
+#if DEBUG_SERIAL
+    Serial.printf("[App] Menu cursor: %d\n", _menuCursor);
+#endif
+}
+
+void AppController::menuSelect()
+{
+    if (_currentScreen != ScreenState::TRACK_BROWSER)
+        return;
+
+    uint16_t total = _sd.getTrackCount();
+    if (total == 0)
+        return;
+
+    // Load and play selected track
+    _currentTrack = _menuCursor;
+    const char *path = _sd.getTrackPath(_currentTrack);
+    if (!path)
+        return;
+
+    _started = true;
+    _audio.play(path);
+    _currentScreen = ScreenState::NOW_PLAYING;
+
+#if DEBUG_SERIAL
+    Serial.printf("[App] Track selected: %d, now playing\n", _currentTrack);
+#endif
+}
+
+void AppController::handleLongPressC()
+{
+    // If C button is long-pressed, return to track browser
+    if (_input.isSelectLongPressed())
+    {
+        _currentScreen = ScreenState::TRACK_BROWSER;
+        _menuCursor = _currentTrack; // Keep cursor on current track
+        _menuScrollOffset = _currentTrack > 2 ? _currentTrack - 2 : 0;
+
+#if DEBUG_SERIAL
+        Serial.println(F("[App] Long-press detected, returning to Track Browser"));
+#endif
+    }
+}
+
+// ── Playback control methods ──────────────────────────────
 void AppController::nextTrack()
 {
     uint16_t total = _sd.getTrackCount();

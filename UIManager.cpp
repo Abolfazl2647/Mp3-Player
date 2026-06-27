@@ -121,6 +121,81 @@ void UIManager::begin()
     Serial.println(F("[UI] Display initialized OK"));
 }
 
+// ── Splash Screen (SPLASH state) ──────────────────────────
+void UIManager::renderSplash()
+{
+    _display.clearDisplay();
+    _display.setTextSize(2);
+    _display.setTextColor(SSD1306_WHITE);
+
+    const char *title = "ESP32 MP3";
+    const char *subtitle = "Player";
+
+    int16_t titleX = (OLED_WIDTH - (int16_t)(strlen(title) * 12)) / 2;
+    int16_t subtitleX = (OLED_WIDTH - (int16_t)(strlen(subtitle) * 12)) / 2;
+
+    _display.setCursor(titleX, 20);
+    _display.print(title);
+
+    _display.setCursor(subtitleX, 40);
+    _display.print(subtitle);
+
+    _display.display();
+}
+
+// ── Track Browser Screen (TRACK_BROWSER state) ────────────
+// Note: SDManager included via forward declaration in header
+#include "SDManager.h"
+
+void UIManager::renderTrackBrowser(SDManager &sdm, uint16_t totalTracks, int cursor, int scrollOffset, int displayLines)
+{
+    _display.clearDisplay();
+    _display.setTextColor(SSD1306_WHITE);
+    _display.setTextSize(1);
+
+    const int PAD = 3;
+    const int lineH = 10;
+    const int startY = PAD + 8; // Account for header
+
+    // Header
+    _display.drawLine(0, 10, OLED_WIDTH, 10, SSD1306_WHITE);
+    _display.setCursor(PAD, PAD);
+    _display.print(F("TRACK LIST"));
+
+    // Display tracks
+    for (int i = 0; i < displayLines && (scrollOffset + i) < totalTracks; i++)
+    {
+        int trackIdx = scrollOffset + i;
+        int y = startY + (i * lineH);
+
+        // Highlight current cursor
+        bool isSelected = (trackIdx == cursor);
+        if (isSelected)
+        {
+            _display.fillRect(0, y - 1, OLED_WIDTH, lineH - 1, SSD1306_WHITE);
+            _display.setTextColor(SSD1306_BLACK);
+        }
+        else
+        {
+            _display.setTextColor(SSD1306_WHITE);
+        }
+
+        // Format track entry: "NN. Filename"
+        char buf[30];
+        const char *trackName = sdm.getTrackName(trackIdx);
+        snprintf(buf, sizeof(buf), "%02d. %s", trackIdx + 1, trackName ? trackName : "???");
+
+        // Truncate if too long for display
+        if (strlen(buf) > 21)
+            buf[21] = '\0';
+
+        _display.setCursor(PAD, y);
+        _display.print(buf);
+    }
+
+    _display.display();
+}
+
 void UIManager::update(const char *trackName, PlayState state,
                        float progress, uint32_t posSec, uint32_t durSec,
                        int volume, uint16_t trackIdx, uint16_t trackTotal)

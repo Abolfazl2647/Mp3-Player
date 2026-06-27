@@ -67,28 +67,30 @@
 
 ---
 
-### Rotary Encoder (with push button)
+### 5-Way Navigation Module
 
-| Encoder Pin | ESP32 Pin | Notes |
-|-------------|-----------|-------|
-| VCC | 3.3V | (if module has VCC pin) |
-| GND | GND | |
-| CLK (A) | GPIO 32 | Interrupt-capable pin |
-| DT (B) | GPIO 33 | Interrupt-capable pin |
-| SW | GPIO 13 | Push button — internal pull-up enabled |
+| Module Pin | ESP32 Pin | Notes |
+|------------|-----------|-------|
+| GND | GND | Ground |
+| + | 3.3V | Power (VIN) |
+| U | GPIO 33 | Up — menu up / scroll up |
+| D | GPIO 14 | Down — menu down / scroll down |
+| L | GPIO 32 | Left — previous track |
+| R | GPIO 4 | Right — next track |
+| C | GPIO 13 | Click — select / play-pause / confirm |
 
-- GPIO 13 uses ESP32 internal pull-up; wire SW between GPIO 13 and GND
-- Rotate: adjust volume / navigate menu
-- Press: play/pause / confirm selection
+- All pins use ESP32 internal pull-ups — no external resistors needed
+- All buttons are active LOW (pin reads LOW when pressed)
+- Debounced via software (50ms window)
 
 ---
 
-### Buttons (4-Pin Momentary Switches)
+### Volume Buttons (4-Pin Momentary Switches)
 
 | Button | ESP32 Pin | Wiring |
 |--------|-----------|--------|
-| Next Track | GPIO 4 | Between GPIO 4 and GND (internal pull-up) |
-| Prev Track | GPIO 14 | Between GPIO 14 and GND (internal pull-up) |
+| Volume Up | GPIO 12 | Between GPIO 12 and GND (internal pull-up) |
+| Volume Down | GPIO 15 | Between GPIO 15 and GND (internal pull-up) |
 
 **4-Pin Button Configuration:**
 - 4-pin buttons have two internally-connected pairs (diagonal pins)
@@ -109,10 +111,12 @@
 | GPIO | Function | Component |
 |------|----------|-----------|
 | 2 | PCM XSMT | PCM5102A soft mute control |
-| 4 | BTN NEXT | Next button |
+| 4 | 5WAY_R | 5-way module Right (next track) |
 | 5 | SPI CS | SD card chip select |
-| 13 | ROT SW | Rotary encoder push button |
-| 14 | BTN PREV | Prev button |
+| 12 | VOL UP | Volume up button |
+| 13 | 5WAY_C | 5-way module Click (select/play) |
+| 14 | 5WAY_D | 5-way module Down (menu down) |
+| 15 | VOL DOWN | Volume down button |
 | 18 | SPI SCK | SD card clock |
 | 19 | SPI MISO | SD card data in |
 | 21 | I2C SDA | OLED display |
@@ -121,8 +125,8 @@
 | 25 | I2S LRCK | PCM5102A word select |
 | 26 | I2S BCLK | PCM5102A bit clock |
 | 27 | I2S DOUT | PCM5102A data |
-| 32 | ROT CLK | Rotary encoder A |
-| 33 | ROT DT | Rotary encoder B |
+| 32 | 5WAY_L | 5-way module Left (previous track) |
+| 33 | 5WAY_U | 5-way module Up (menu up) |
 
 ---
 
@@ -156,7 +160,11 @@
 
 ## Notes
 
-- **All button and encoder pins use ESP32 internal pull-ups** — no external resistors needed.
+- **All button pins (5-way + volume) use ESP32 internal pull-ups** — no external resistors needed.
+- **Button Input Handling:**
+  - All buttons are debounced via software (50ms window)
+  - 5-way module uses polling (no interrupts) for simplicity and responsiveness
+  - Long-press detection on 5-way C button (≥1.5s) to return to track browser
 - **PCM5102A Control Pins:**
   - SCK, FMT, FLT, DEMP must be tied to GND (standard I2S configuration)
   - XSMT controlled by GPIO 2 (HIGH = unmute, LOW = mute)

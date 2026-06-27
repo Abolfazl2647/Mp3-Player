@@ -4,7 +4,7 @@
 
 // Callback types for input events
 typedef void (*ButtonCallback)();
-typedef void (*EncoderCallback)(int direction); // +1 or -1
+typedef void (*MenuCallback)(int direction); // +1 for down, -1 for up
 
 class InputManager
 {
@@ -12,10 +12,22 @@ public:
     void begin();
     void update(); // call from loop()
 
-    void onNextPress(ButtonCallback cb);
-    void onPrevPress(ButtonCallback cb);
-    void onRotaryClick(ButtonCallback cb); // short press
-    void onRotaryTurn(EncoderCallback cb);
+    // Menu navigation callbacks
+    void onMenuUp(ButtonCallback cb);
+    void onMenuDown(ButtonCallback cb);
+    void onMenuSelect(ButtonCallback cb);
+
+    // Playback control callbacks
+    void onPrevTrack(ButtonCallback cb);
+    void onNextTrack(ButtonCallback cb);
+    void onPlayPause(ButtonCallback cb);
+
+    // Volume callbacks
+    void onVolumeUp(ButtonCallback cb);
+    void onVolumeDown(ButtonCallback cb);
+
+    // Long-press detection for menu select button
+    bool isSelectLongPressed() const;
 
 private:
     // Debounced button state
@@ -28,15 +40,27 @@ private:
         ButtonCallback callback;
     };
 
-    Button _btnNext;
-    Button _btnPrev;
-    Button _btnRotSw;
+    // 5-way navigation module buttons
+    Button _btn5wayU;    // Menu up
+    Button _btn5wayD;    // Menu down
+    Button _btn5wayL;    // Prev track
+    Button _btn5wayR;    // Next track
+    Button _btn5wayC;    // Menu select / Play-pause
+
+    // Volume buttons
+    Button _btnVolUp;
+    Button _btnVolDown;
+
+    // Long-press detection for 5-way C button
+    struct LongPressState
+    {
+        unsigned long pressStartMs = 0;
+        bool isPressed = false;
+    } _selectLongPress;
+
+    const unsigned long LONG_PRESS_MS = 1500; // 1.5 seconds
 
     void initButton(Button &btn, uint8_t pin);
     void updateButton(Button &btn);
-
-    // Rotary via interrupts
-    static void IRAM_ATTR isrRotary();
-    static volatile int _encoderDelta;
-    EncoderCallback _encoderCb = nullptr;
+    void updateButtonWithLongPress(Button &btn, LongPressState &longPress);
 };

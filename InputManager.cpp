@@ -1,56 +1,31 @@
 #include "InputManager.h"
 
-volatile int InputManager::_encoderDelta = 0;
-
-// ISR for rotary encoder — Gray-code reading
-void IRAM_ATTR InputManager::isrRotary()
-{
-    static uint8_t prevState = 0;
-    uint8_t a = digitalRead(PIN_ROT_CLK);
-    uint8_t b = digitalRead(PIN_ROT_DT);
-    uint8_t curState = (a << 1) | b;
-
-    // Valid transitions in Gray code sequence
-    // 00→01→11→10 = CW,  00→10→11→01 = CCW
-    uint8_t combined = (prevState << 2) | curState;
-    switch (combined)
-    {
-    case 0b0001:
-    case 0b0111:
-    case 0b1110:
-    case 0b1000:
-        _encoderDelta++;
-        break;
-    case 0b0010:
-    case 0b1011:
-    case 0b1101:
-    case 0b0100:
-        _encoderDelta--;
-        break;
-    }
-    prevState = curState;
-}
-
 void InputManager::initButton(Button &btn, uint8_t pin)
 {
     btn.pin = pin;
     pinMode(pin, INPUT_PULLUP);
     btn.lastStable = HIGH; // Assume released (active-LOW buttons)
     btn.lastReading = HIGH;
-    btn.lastChangeMs = millis(); // Prevent false trigger at boot
+    btn.lastChangeMs = millis();
     btn.callback = nullptr;
 }
 
 void InputManager::begin()
 {
-    initButton(_btnNext, PIN_BTN_NEXT);
-    initButton(_btnPrev, PIN_BTN_PREV);
-    initButton(_btnRotSw, PIN_ROT_SW);
+    // Initialize 5-way module buttons
+    initButton(_btn5wayU, PIN_5WAY_U);
+    initButton(_btn5wayD, PIN_5WAY_D);
+    initButton(_btn5wayL, PIN_5WAY_L);
+    initButton(_btn5wayR, PIN_5WAY_R);
+    initButton(_btn5wayC, PIN_5WAY_C);
 
-    pinMode(PIN_ROT_CLK, INPUT_PULLUP);
-    pinMode(PIN_ROT_DT, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(PIN_ROT_CLK), isrRotary, CHANGE);
-    attachInterrupt(digitalPinToInterrupt(PIN_ROT_DT), isrRotary, CHANGE);
+    // Initialize volume buttons
+    initButton(_btnVolUp, PIN_VOL_UP);
+    initButton(_btnVolDown, PIN_VOL_DOWN);
+
+#if DEBUG_SERIAL
+    Serial.println(F("[Input] 5-way + volume buttons initialized"));
+#endif
 }
 
 void InputManager::updateButton(Button &btn)
@@ -62,62 +37,89 @@ void InputManager::updateButton(Button &btn)
     }
     btn.lastReading = reading;
 
+    // Debounce: fire callback on transition from HIGH→LOW (button press)
     if ((millis() - btn.lastChangeMs) > DEBOUNCE_MS)
     {
-        // ── Next / Prev: fire on press-down (original behaviour) ──────
-        if (&btn != &_btnRotSw)
+        if (!reading && btn.lastStable)
         {
-            if (!reading && btn.lastStable)
-            {
-                if (btn.callback)
-                    btn.callback();
-            }
-            btn.lastStable = reading;
-            return;
-        }
-
-        // ── Rotary switch: fire on release ────────────────────────────
-        if (reading && !btn.lastStable)
-        {
+            // Button just pressed (transition from released to pressed)
             if (btn.callback)
                 btn.callback();
         }
+        btn.lastStable = reading;
+    }
+}
 
+void InputManager::updateButtonWithLongPress(Button &btn, LongPressState &longPress)
+{
+    bool reading = digitalRead(btn.pin);
+    if (reading != btn.lastReading)
+    {
+        btn.lastChangeMs = millis();
+    }
+    btn.lastReading = reading;
+
+    unsigned long debounceWait = millis() - btn.lastChangeMs;
+
+    if (debounceWait > DEBOUNCE_MS)
+    {
+        if (!reading && btn.lastStable)
+        {
+            // Button just pressed
+            longPress.pressStartMs = millis();
+            longPress.isPressed = true;
+        }
+        else if (reading && !btn.lastStable)
+        {
+            // Button just released
+            longPress.isPressed = false;
+
+            // Fire callback only if this was NOT a long press
+            unsigned long pressDuration = millis() - longPress.pressStartMs;
+            if (pressDuration < LONG_PRESS_MS && btn.callback)
+            {
+                btn.callback();
+            }
+        }
         btn.lastStable = reading;
     }
 }
 
 void InputManager::update()
 {
-    updateButton(_btnNext);
-    updateButton(_btnPrev);
-    updateButton(_btnRotSw);
+    // Update 5-way navigation buttons (except C, which handles long-press)
+    updateButton(_btn5wayU);
+    updateButton(_btn5wayD);
+    updateButton(_btn5wayL);
+    updateButton(_btn5wayR);
 
-    // Process accumulated encoder ticks
-    noInterrupts();
-    int delta = _encoderDelta;
-    _encoderDelta = 0;
-    interrupts();
+    // Update C button with long-press detection
+    updateButtonWithLongPress(_btn5wayC, _selectLongPress);
 
-    // Post-process: 4 raw ticks = 1 detent on most encoders
-    // Send callback per detent
-    static int accumulator = 0;
-    accumulator += delta;
-    while (accumulator >= 4)
-    {
-        accumulator -= 4;
-        if (_encoderCb)
-            _encoderCb(1);
-    }
-    while (accumulator <= -4)
-    {
-        accumulator += 4;
-        if (_encoderCb)
-            _encoderCb(-1);
-    }
+    // Update volume buttons
+    updateButton(_btnVolUp);
+    updateButton(_btnVolDown);
 }
 
-void InputManager::onNextPress(ButtonCallback cb) { _btnNext.callback = cb; }
-void InputManager::onPrevPress(ButtonCallback cb) { _btnPrev.callback = cb; }
-void InputManager::onRotaryClick(ButtonCallback cb) { _btnRotSw.callback = cb; }
-void InputManager::onRotaryTurn(EncoderCallback cb) { _encoderCb = cb; }
+bool InputManager::isSelectLongPressed() const
+{
+    if (!_selectLongPress.isPressed)
+        return false;
+
+    unsigned long pressDuration = millis() - _selectLongPress.pressStartMs;
+    return pressDuration >= LONG_PRESS_MS;
+}
+
+// Menu navigation callbacks
+void InputManager::onMenuUp(ButtonCallback cb) { _btn5wayU.callback = cb; }
+void InputManager::onMenuDown(ButtonCallback cb) { _btn5wayD.callback = cb; }
+void InputManager::onMenuSelect(ButtonCallback cb) { _btn5wayC.callback = cb; }
+
+// Playback control callbacks
+void InputManager::onPrevTrack(ButtonCallback cb) { _btn5wayL.callback = cb; }
+void InputManager::onNextTrack(ButtonCallback cb) { _btn5wayR.callback = cb; }
+void InputManager::onPlayPause(ButtonCallback cb) { _btn5wayC.callback = cb; }
+
+// Volume callbacks
+void InputManager::onVolumeUp(ButtonCallback cb) { _btnVolUp.callback = cb; }
+void InputManager::onVolumeDown(ButtonCallback cb) { _btnVolDown.callback = cb; }

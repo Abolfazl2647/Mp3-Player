@@ -50,14 +50,16 @@
 #define PIN_I2S_DOUT 27
 #define PIN_PCM_XSMT 2  // PCM5102A soft mute control (unmute)
 
-// ── Rotary encoder ────────────────────────────────────────
-#define PIN_ROT_CLK 32
-#define PIN_ROT_DT 33
-#define PIN_ROT_SW 13 // internal pull-up
+// ── 5-Way Navigation Module ──────────────────────────────
+#define PIN_5WAY_U 33    // Up — scroll up in menu
+#define PIN_5WAY_D 14    // Down — scroll down in menu
+#define PIN_5WAY_L 32    // Left — previous track (NOW_PLAYING only)
+#define PIN_5WAY_R 4     // Right — next track (NOW_PLAYING only)
+#define PIN_5WAY_C 13    // Click — select / play-pause
 
-// ── Buttons ───────────────────────────────────────────────
-#define PIN_BTN_NEXT 4 // internal pull-up
-#define PIN_BTN_PREV 14
+// ── Volume Buttons ────────────────────────────────────────
+#define PIN_VOL_UP 12    // Volume up (internal pull-up)
+#define PIN_VOL_DOWN 15  // Volume down (internal pull-up)
 
 // ── Audio settings ────────────────────────────────────────
 #define VOLUME_DEFAULT 15 // 0–21 (ESP8266Audio gain range)

@@ -10,12 +10,17 @@ A standalone MP3 player built on the ESP32-D0WD-V3, featuring I2S audio output v
 
 ## Features
 
+- **3-Screen UI System:**
+  - Splash screen (2s startup)
+  - Track browser with scrollable list and inverted cursor
+  - Now playing screen with progress bar and playback controls
 - MP3 playback from FAT32 micro SD card (up to 200 tracks)
 - High-quality I2S audio via PCM5102A DAC
 - 128×64 OLED display with scrolling track name, progress bar, and playback status
-- Rotary encoder for volume control and menu navigation
-- Next / Previous track buttons
+- 5-way navigation module for intuitive control
+- Dedicated volume buttons (up/down)
 - Play, pause, and resume support
+- Long-hold C button to return to track browser from playback
 - ~10 FPS display refresh with FreeRTOS task isolation
 
 ---
@@ -87,33 +92,65 @@ SCK, FMT, FLT, DEMP must be tied to GND; XSMT controlled by GPIO 2 to unmute the
 
 ---
 
-### KY-040 Rotary Encoder
+### 5-Way Navigation Module
 
-<img src="image/rotary_encoder.jpg" alt="KY-040 Rotary Encoder"/>
-
-Rotary encoder with push button. Rotating adjusts volume / navigates menus; pressing plays/pauses or confirms selection.
+A 5-pin navigation module providing up/down/left/right/click inputs for intuitive menu browsing and playback control.
 All pins use ESP32 internal pull-ups — no external resistors needed.
 
-| Pin | ESP32 GPIO |
-|-----|-----------|
-| GND | GND |
-| CLK | GPIO 32 |
-| DT  | GPIO 33 |
-| SW  | GPIO 13 |
+| Pin | ESP32 GPIO | Function |
+|-----|-----------|----------|
+| GND | GND | Ground |
+| + | 3.3V | Power (VIN) |
+| U | GPIO 33 | Up — scroll menu up |
+| D | GPIO 14 | Down — scroll menu down |
+| L | GPIO 32 | Left — previous track |
+| R | GPIO 4 | Right — next track |
+| C | GPIO 13 | Click — select track / play-pause |
 
 ---
 
-### Tactile Push Buttons
+### Volume Buttons
 
-<img src="image/push_button.jpg" alt="Tactile Push Buttons"/>
-
-Two momentary push buttons for Next Track and Previous Track.
+Two dedicated momentary buttons for volume control.
 Wired between the GPIO pin and GND; internal pull-ups used (active LOW).
 
-| Button | ESP32 GPIO |
-|--------|-----------|
-| Next   | GPIO 4 |
-| Prev   | GPIO 14 |
+| Button | ESP32 GPIO | Function |
+|--------|-----------|----------|
+| Vol+   | GPIO 12 | Increase volume |
+| Vol−   | GPIO 15 | Decrease volume |
+
+---
+
+## Controls & Navigation
+
+### Screen 1: Splash Screen (Startup)
+- Displays "ESP32 MP3 Player" for 2 seconds
+- Auto-transitions to Track Browser
+
+### Screen 2: Track Browser
+Browse and select tracks from your SD card.
+
+| Control | Action |
+|---------|--------|
+| U (Up) | Scroll up in track list |
+| D (Down) | Scroll down in track list |
+| C (Click) | Select and play highlighted track → Now Playing |
+| Vol+/Vol− | (Disabled in browser) |
+
+- Highlighted track shown with **inverted display** (white background)
+- Automatic scrolling when cursor moves off-screen
+
+### Screen 3: Now Playing
+Play, pause, and control playback.
+
+| Control | Action |
+|---------|--------|
+| L (Left) | Previous track |
+| R (Right) | Next track |
+| C (Click) | Play / Pause / Resume |
+| C (Long Hold ≥1.5s) | Return to Track Browser |
+| Vol+ | Increase volume (0–21 range) |
+| Vol− | Decrease volume (0–21 range) |
 
 ---
 
